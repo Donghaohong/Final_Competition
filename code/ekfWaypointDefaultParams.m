@@ -12,7 +12,7 @@ params.enableLivePlot = false;
 params.livePlotUpdatePeriod = 0.35;
 
 % Waypoint controller.
-params.closeEnough = 0.12;
+params.closeEnough = 0.20;
 params.kPosition = 0.8;
 params.vxyMax = 0.08;
 params.epsilon = 0.45;
@@ -56,9 +56,9 @@ params.wallThickness = 0.10;
 params.stopOnBump = true;
 params.stopIfNoGoals = true;
 params.enableBumpRecovery = true;
-params.maxBumpRecoveries = 3;
-params.recoveryBackDistance = 0.22;
-params.recoveryTurnAngle = deg2rad(35);
+params.maxBumpRecoveries = 8;
+params.recoveryBackDistance = 0.35;
+params.recoveryTurnAngle = deg2rad(45);
 params.recoveryBackVel = -0.08;
 params.recoveryTurnVel = 0.45;
 params.recoveryControlDt = 0.10;

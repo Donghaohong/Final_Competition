@@ -54,8 +54,16 @@ params.bumpProbeBeyondWall = 0.28;
 params.bumpProbeMaxTravel = 0.95;
 params.bumpProbeRobotRadius = 0.17;
 params.bumpProbeMinTravelForWall = 0.06;
-params.bumpProbeBackupDistance = 0.14;
+params.bumpProbeBackupDistance = 0.45;
 params.bumpProbeBackupSpeed = -0.06;
+
+% If the normal depth observation point is unreachable, try a direct low-speed
+% bump probe from a nearby reachable standoff point instead of giving up.
+params.enableBumpProbeFallback = true;
+params.bumpFallbackDistances = [0.42 0.55 0.70 0.90];
+params.bumpFallbackTangentOffsets = [-0.45 -0.25 0 0.25 0.45];
+params.bumpFallbackClearance = 0.22;
+params.bumpFallbackMaxRunTime = 90.0;
 
 params.debugPrint = true;
 

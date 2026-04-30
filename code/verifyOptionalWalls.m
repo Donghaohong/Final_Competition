@@ -46,8 +46,13 @@ for i = 1:size(optWalls, 1)
     wallStatus(i).observeInfo = observeInfo;
 
     if isempty(observePoint)
-        wallStatus(i).status = 'unknown';
-        wallStatus(i).reason = observeInfo.reason;
+        [currentState, dataStore, fallbackStatus] = runOptionalWallBumpFallback( ...
+            Robot, currentState, wall, currentMap, beaconLoc, offset_x, offset_y, ...
+            ekfParams, plannerParams, params, dataStore, i);
+        wallStatus(i) = mergeFallbackWallStatus(wallStatus(i), fallbackStatus);
+        if strcmp(wallStatus(i).status, 'exists')
+            confirmedOptionalWalls = [confirmedOptionalWalls; wall]; %#ok<AGROW>
+        end
         continue;
     end
 
@@ -462,6 +467,173 @@ end
 dataStore.optionalWallBumpProbe = [dataStore.optionalWallBumpProbe; ...
     getOptionalWallTime(dataStore) wallIdx double(probe.bumped) ...
     probe.travel probe.maxTravel double(strcmp(probe.status, 'exists'))];
+end
+
+function [currentState, dataStore, fallbackStatus] = runOptionalWallBumpFallback( ...
+    Robot, currentState, wall, currentMap, beaconLoc, offset_x, offset_y, ...
+    ekfParams, plannerParams, verifyParams, dataStore, wallIdx)
+fallbackStatus = emptyWallStatus();
+fallbackStatus.wallIdx = wallIdx;
+fallbackStatus.wall = wall;
+fallbackStatus.reason = 'noReachableObservePoint';
+
+if ~isfield(verifyParams, 'enableBumpProbeFallback') || ~verifyParams.enableBumpProbeFallback
+    return;
+end
+
+[probeStart, probeInfo] = chooseOptionalWallProbeStartPoint( ...
+    currentState.pose(1:2).', wall, currentMap, plannerParams, verifyParams);
+fallbackStatus.observePoint = probeStart;
+fallbackStatus.observeInfo = probeInfo;
+
+if isempty(probeStart)
+    fallbackStatus.reason = ['bumpFallback_' probeInfo.reason];
+    return;
+end
+
+[pathToProbe, planInfo] = planPathKnownMap( ...
+    currentState.pose(1:2).', probeStart, currentMap, plannerParams);
+fallbackStatus.pathToObserve = pathToProbe;
+fallbackStatus.planInfo = planInfo;
+if isempty(pathToProbe) || ~planInfo.success
+    fallbackStatus.reason = ['bumpFallbackPlanFailed_' planInfo.reason];
+    return;
+end
+
+followerParams = ekfParams;
+followerParams.maxRunTime = verifyParams.bumpFallbackMaxRunTime;
+[ekfState, dataStore, navState] = runEkfWaypointFollower( ...
+    Robot, currentMap, beaconLoc, pathToProbe, offset_x, offset_y, ...
+    currentState, followerParams, dataStore);
+
+fallbackStatus.navState = navState;
+fallbackStatus.ekfPoseAtObserve = ekfState.pose;
+fallbackStatus.ekfCovAtObserve = ekfState.poseCov;
+currentState.pose = ekfState.pose;
+currentState.poseCov = ekfState.poseCov;
+
+if ~ekfState.reachedAllGoals
+    fallbackStatus.reason = ['bumpFallbackNavigationFailed_' ekfState.stopReason];
+    return;
+end
+
+wallMid = wallMidpoint(wall);
+[currentState, dataStore, turnInfo] = turnToFacePointWithEkf( ...
+    Robot, currentState, wallMid, verifyParams, dataStore);
+fallbackStatus.turnInfo = turnInfo;
+fallbackStatus.ekfPoseAtClassify = currentState.pose;
+fallbackStatus.ekfCovAtClassify = currentState.poseCov;
+
+[currentState, dataStore, bumpProbe] = runOptionalWallBumpProbe( ...
+    Robot, currentState, wall, verifyParams, dataStore, wallIdx);
+fallbackStatus.bumpProbe = bumpProbe;
+fallbackStatus.classification = struct('status', bumpProbe.status, 'reason', bumpProbe.reason);
+fallbackStatus.numFrames = 0;
+fallbackStatus.numRaysUsed = 0;
+fallbackStatus.errPresent = inf;
+fallbackStatus.errAbsent = inf;
+
+switch bumpProbe.status
+    case 'exists'
+        fallbackStatus.status = 'exists';
+        fallbackStatus.confidence = 1;
+        fallbackStatus.reason = 'bumpFallbackContact';
+    case 'absent'
+        fallbackStatus.status = 'absent';
+        fallbackStatus.confidence = 1;
+        fallbackStatus.reason = 'bumpFallbackNoContact';
+    otherwise
+        fallbackStatus.status = 'unknown';
+        fallbackStatus.confidence = 0;
+        fallbackStatus.reason = ['bumpFallback_' bumpProbe.reason];
+end
+end
+
+function [probeStart, info] = chooseOptionalWallProbeStartPoint(startXY, wall, map, plannerParams, verifyParams)
+mid = wallMidpoint(wall);
+wallVec = wall(3:4) - wall(1:2);
+wallLen = norm(wallVec);
+info = struct('reason', '', 'candidates', [], 'candidateScores', []);
+probeStart = [];
+
+if wallLen < eps
+    info.reason = 'zeroLengthWall';
+    return;
+end
+
+tangent = wallVec / wallLen;
+normal = [-tangent(2), tangent(1)];
+distances = verifyParams.bumpFallbackDistances(:).';
+offsets = verifyParams.bumpFallbackTangentOffsets(:).';
+
+candidates = zeros(0, 2);
+for d = distances
+    for offset = offsets
+        wallPoint = mid + offset * tangent;
+        for side = [-1 1]
+            candidates(end + 1, :) = wallPoint + side * d * normal; %#ok<AGROW>
+        end
+    end
+end
+candidates = uniqueRowsToleranceLocal(candidates, 1e-6);
+info.candidates = candidates;
+info.candidateScores = inf(size(candidates, 1), 1);
+
+bestScore = inf;
+bestPoint = [];
+bestPlanInfo = struct();
+for i = 1:size(candidates, 1)
+    p = candidates(i, :);
+    if ~probeStartPointIsValid(p, map, verifyParams)
+        continue;
+    end
+
+    [path, planInfo] = planPathKnownMap(startXY, p, map, plannerParams);
+    if isempty(path) || ~planInfo.success
+        continue;
+    end
+
+    headingPenalty = abs(dot((mid - p) / max(norm(mid - p), eps), tangent));
+    score = planInfo.pathCost + 0.15 * norm(p - mid) + 0.15 * headingPenalty;
+    info.candidateScores(i) = score;
+    if score < bestScore
+        bestScore = score;
+        bestPoint = p;
+        bestPlanInfo = planInfo;
+    end
+end
+
+if isempty(bestPoint)
+    info.reason = 'noReachableProbeStart';
+    return;
+end
+
+probeStart = bestPoint;
+info.reason = 'ok';
+info.bestScore = bestScore;
+info.bestPlanInfo = bestPlanInfo;
+end
+
+function tf = probeStartPointIsValid(p, map, verifyParams)
+tf = false;
+bounds = inferBoundsLocal(map);
+clearance = verifyParams.bumpFallbackClearance;
+if p(1) < bounds(1) + clearance || p(1) > bounds(2) - clearance || ...
+   p(2) < bounds(3) + clearance || p(2) > bounds(4) - clearance
+    return;
+end
+if minPointWallDistanceLocal(p, map) < clearance
+    return;
+end
+tf = true;
+end
+
+function statusOut = mergeFallbackWallStatus(statusIn, fallbackStatus)
+statusOut = statusIn;
+fn = fieldnames(fallbackStatus);
+for i = 1:numel(fn)
+    statusOut.(fn{i}) = fallbackStatus.(fn{i});
+end
 end
 
 function [mu, sigma, backupTravel] = backAwayAfterOptionalWallBump(Robot, mu, sigma, params)
