@@ -15,6 +15,21 @@ This folder is a clean extraction of the current final competition code.
 - `testInitializeLocalizationPracticeMap(Robot)`
 - `testEkfWaypointFollowingPracticeMap(Robot, goalWaypoints)`
 - `testOptionalWallVerificationPracticeMap(Robot)`
+- `testIntegratedWaypointOptionalPracticeMap(Robot, goalWaypoints)`
+
+## Current Integrated Flow
+
+`testIntegratedWaypointOptionalPracticeMap` is the current top-level PracticeMap
+test entry. It runs:
+
+1. particle-filter initialization localization;
+2. EKF localization with known-map waypoint following;
+3. optional-wall checks when a planned path is relevant to an unknown wall;
+4. post-waypoint optional-wall verification for any walls still marked unknown.
+
+Navigation bump recovery uses `ekfWaypointDefaultParams.recoveryBackDistance`.
+Optional-wall contact probing uses
+`optionalWallDefaultParams.bumpProbeBackupDistance`.
 
 ## Notes
 

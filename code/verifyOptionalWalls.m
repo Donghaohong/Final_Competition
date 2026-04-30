@@ -36,11 +36,12 @@ wallStatus = repmat(emptyWallStatus(), size(optWalls, 1), 1);
 for i = 1:size(optWalls, 1)
     currentMap = [map; confirmedOptionalWalls];
     wall = optWalls(i, :);
+    displayWallIdx = getOptionalWallDisplayIdx(i, params);
 
     [observePoint, observeInfo] = chooseOptionalWallObservePoint( ...
         currentState.pose(1:2).', wall, currentMap, plannerParams, params);
 
-    wallStatus(i).wallIdx = i;
+    wallStatus(i).wallIdx = displayWallIdx;
     wallStatus(i).wall = wall;
     wallStatus(i).observePoint = observePoint;
     wallStatus(i).observeInfo = observeInfo;
@@ -128,7 +129,7 @@ for i = 1:size(optWalls, 1)
 
     if params.debugPrint
         fprintf('[verifyOptionalWalls] wall %d status=%s conf=%.2f rays=%d absentErr=%.3f presentErr=%.3f\n', ...
-            i, wallStatus(i).status, wallStatus(i).confidence, wallStatus(i).numRaysUsed, ...
+            displayWallIdx, wallStatus(i).status, wallStatus(i).confidence, wallStatus(i).numRaysUsed, ...
             wallStatus(i).errAbsent, wallStatus(i).errPresent);
     end
 end
@@ -136,6 +137,14 @@ end
 verifiedMap = [map; confirmedOptionalWalls];
 dataStore.optionalWallStatus = wallStatus;
 dataStore.verifiedMap = verifiedMap;
+end
+
+function displayIdx = getOptionalWallDisplayIdx(localIdx, params)
+displayIdx = localIdx;
+if isfield(params, 'wallIdxLabels') && numel(params.wallIdxLabels) >= localIdx && ...
+        isfinite(params.wallIdxLabels(localIdx))
+    displayIdx = params.wallIdxLabels(localIdx);
+end
 end
 
 function status = emptyWallStatus()

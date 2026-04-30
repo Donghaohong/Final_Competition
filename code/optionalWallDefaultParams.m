@@ -66,6 +66,7 @@ params.bumpFallbackClearance = 0.22;
 params.bumpFallbackMaxRunTime = 90.0;
 
 params.debugPrint = true;
+params.wallIdxLabels = [];
 
 if nargin < 1 || isempty(override)
     return;
