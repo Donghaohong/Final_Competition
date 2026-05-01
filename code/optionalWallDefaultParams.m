@@ -16,11 +16,11 @@ params.observeAlignmentPenalty = 0.20;
 % Motion to observation point.
 params.followerMaxRunTime = 140.0;
 params.stopIfNavigationFails = false;
-% PF navigation to optional-wall observe/probe points should not use depth by
-% default: the candidate wall is not in the map yet, so depth can pull PF to a
-% wrong known-wall explanation before classification.
-params.pfFollowerUseDepth = false;
-params.pfFollowerDepthWeight = 0.0;
+% Use depth lightly while navigating to optional-wall observe/probe points.
+% A low weight helps PF localization in weak-beacon regions without letting an
+% unverified candidate wall dominate the known-map likelihood.
+params.pfFollowerUseDepth = true;
+params.pfFollowerDepthWeight = 0.35;
 params.pfFollowerUseBeacons = true;
 
 % Turn-to-wall behavior.
