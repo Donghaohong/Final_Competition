@@ -7,7 +7,7 @@ params = struct();
 params.observeDistance = 0.80;
 params.observeDistances = [0.45 0.60 0.75 0.90 1.10];
 params.observeTangentOffsets = [-0.40 -0.20 0 0.20 0.40];
-params.observeClearance = 0.35;
+params.observeClearance = 0.38;
 params.minWallViewDistance = 0.25;
 params.maxWallViewDistance = 2.00;
 params.observeDistancePenalty = 0.25;
@@ -16,9 +16,9 @@ params.observeAlignmentPenalty = 0.20;
 % Motion to observation point.
 params.followerMaxRunTime = 140.0;
 params.stopIfNavigationFails = false;
-params.navigationEdgeClearance = 0.42;
-params.navigationNodeClearance = 0.42;
-params.navigationCornerOffsetRadius = 0.54;
+params.navigationEdgeClearance = 0.46;
+params.navigationNodeClearance = 0.46;
+params.navigationCornerOffsetRadius = 0.60;
 params.navigationStartGoalClearance = 0.08;
 % Use depth lightly while navigating to optional-wall observe/probe points.
 % A low weight helps PF localization in weak-beacon regions without letting an
