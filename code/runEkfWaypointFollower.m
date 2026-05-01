@@ -197,7 +197,9 @@ end
 end
 
 function beepMask = normalizeBeepMask(params, numGoals)
-beepMask = true(numGoals, 1);
+% Beep only for explicitly marked scoring goals. Planned intermediate nodes
+% and helper navigation targets must stay quiet unless the caller opts in.
+beepMask = false(numGoals, 1);
 if isfield(params, 'beepMask') && ~isempty(params.beepMask)
     beepMask = normalizeMaskLength(params.beepMask, numGoals, false);
 end
