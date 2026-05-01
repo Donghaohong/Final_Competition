@@ -14,6 +14,7 @@ This folder is a clean extraction of the current final competition code.
 
 - `testInitializeLocalizationPracticeMap(Robot)`
 - `testEkfWaypointFollowingPracticeMap(Robot, goalWaypoints)`
+- `testPfWaypointFollowingPracticeMap(Robot, goalWaypoints)`
 - `testOptionalWallVerificationPracticeMap(Robot)`
 - `testIntegratedWaypointOptionalPracticeMap(Robot, goalWaypoints)`
 
@@ -30,6 +31,10 @@ test entry. It runs:
 Navigation bump recovery uses `ekfWaypointDefaultParams.recoveryBackDistance`.
 Optional-wall contact probing uses
 `optionalWallDefaultParams.bumpProbeBackupDistance`.
+
+`testPfWaypointFollowingPracticeMap` is a parallel particle-filter waypoint
+following test entry for A/B comparison against the EKF follower. It does not
+replace the integrated EKF flow.
 
 ## Notes
 
