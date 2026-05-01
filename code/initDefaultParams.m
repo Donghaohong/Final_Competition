@@ -17,7 +17,7 @@ params.minSweepTurnForConvergence = 2 * pi;
 params.minSweepTurnForResampling = inf;
 params.controlDt = 0.20;
 params.sweepFwdVel = 0.00;
-params.sweepAngVel = 0.35;
+params.sweepAngVel = 0.20;
 
 % Motion noise used inside the particle filter.
 params.odomSigmaDBase = 0.002;

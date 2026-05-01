@@ -218,9 +218,17 @@ if isempty(goalWaypoints) || ~isfield(navState, 'reachedAllGoals') || ~navState.
     return;
 end
 
+if isfield(navState, 'goalWaypoints') && ~isempty(navState.goalWaypoints)
+    goalWaypoints = navState.goalWaypoints;
+end
+if isfield(navState, 'beepMask') && ~isempty(navState.beepMask)
+    beepMask = navState.beepMask;
+end
+
 numGoals = size(goalWaypoints, 1);
 mask = normalizeLocalMask(beepMask, numGoals, false);
-idx = find(mask, 1, 'last');
+reachedMask = normalizeLocalMask(navState.reachedGoals, numGoals, false);
+idx = find(mask & reachedMask, 1, 'last');
 source = 'lastBeepGoal';
 if isempty(idx)
     idx = numGoals;
