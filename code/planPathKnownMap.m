@@ -52,13 +52,15 @@ if pointWallClearance(goalXY, map) < params.startGoalClearance
 end
 
 if edgeIsCollisionFree(startXY, goalXY, map, bounds, params)
-    path = [startXY; goalXY];
+    rawPath = [startXY; goalXY];
+    path = densifyPath(rawPath, params.maxSegmentLength);
     pathInfo.success = true;
     pathInfo.reason = 'directPath';
     pathInfo.nodes = path;
     pathInfo.edges = [1 2];
-    pathInfo.rawPath = path;
-    pathInfo.pathCost = norm(goalXY - startXY);
+    pathInfo.rawPath = rawPath;
+    pathInfo.path = path;
+    pathInfo.pathCost = pathLength(path);
     return;
 end
 
@@ -104,6 +106,7 @@ if params.smoothPath
 else
     path = rawPath;
 end
+path = densifyPath(path, params.maxSegmentLength);
 
 pathInfo.success = true;
 pathInfo.reason = 'graphPath';
@@ -339,6 +342,25 @@ while i < size(rawPath, 1)
     end
     path(end+1, :) = rawPath(bestJ, :); %#ok<AGROW>
     i = bestJ;
+end
+end
+
+function densePath = densifyPath(path, maxSegmentLength)
+if size(path, 1) < 2 || ~isfinite(maxSegmentLength) || maxSegmentLength <= 0
+    densePath = path;
+    return;
+end
+
+densePath = path(1, :);
+for i = 1:(size(path, 1) - 1)
+    p1 = path(i, :);
+    p2 = path(i + 1, :);
+    segLen = norm(p2 - p1);
+    numSubSegments = max(1, ceil(segLen / maxSegmentLength));
+    for k = 1:numSubSegments
+        alpha = k / numSubSegments;
+        densePath(end + 1, :) = (1 - alpha) * p1 + alpha * p2; %#ok<AGROW>
+    end
 end
 end
 

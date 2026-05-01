@@ -28,6 +28,7 @@ end
 params = optionalWallDefaultParams(verifyParams);
 trackingParams = normalizeOptionalWallFollowerParams(ekfParams, params);
 plannerParams = knownMapPlannerDefaultParams(plannerParams);
+plannerParams = applyOptionalWallNavigationClearance(plannerParams, params);
 
 currentState = initState;
 confirmedOptionalWalls = zeros(0, 4);
@@ -136,6 +137,27 @@ dataStore.optionalWallStatus = wallStatus;
 dataStore.verifiedMap = verifiedMap;
 end
 
+function plannerParams = applyOptionalWallNavigationClearance(plannerParams, verifyParams)
+% Keep optional-wall approach paths slightly farther from known walls than the
+% normal waypoint planner without changing the global planner defaults.
+if isfield(verifyParams, 'navigationEdgeClearance') && isfinite(verifyParams.navigationEdgeClearance)
+    plannerParams.edgeClearance = max(plannerParams.edgeClearance, verifyParams.navigationEdgeClearance);
+end
+if isfield(verifyParams, 'navigationNodeClearance') && isfinite(verifyParams.navigationNodeClearance)
+    plannerParams.nodeClearance = max(plannerParams.nodeClearance, verifyParams.navigationNodeClearance);
+else
+    plannerParams.nodeClearance = max(plannerParams.nodeClearance, plannerParams.edgeClearance);
+end
+if isfield(verifyParams, 'navigationCornerOffsetRadius') && isfinite(verifyParams.navigationCornerOffsetRadius)
+    plannerParams.cornerOffsetRadius = max(plannerParams.cornerOffsetRadius, verifyParams.navigationCornerOffsetRadius);
+else
+    plannerParams.cornerOffsetRadius = max(plannerParams.cornerOffsetRadius, plannerParams.edgeClearance + 0.12);
+end
+if isfield(verifyParams, 'navigationStartGoalClearance') && isfinite(verifyParams.navigationStartGoalClearance)
+    plannerParams.startGoalClearance = max(plannerParams.startGoalClearance, verifyParams.navigationStartGoalClearance);
+end
+end
+
 function displayIdx = getOptionalWallDisplayIdx(localIdx, params)
 displayIdx = localIdx;
 if isfield(params, 'wallIdxLabels') && numel(params.wallIdxLabels) >= localIdx && ...
@@ -159,6 +181,18 @@ if strcmp(mode, 'pf')
     end
 else
     trackingParams = ekfWaypointDefaultParams(paramsIn);
+    if isfield(verifyParams, 'ekfFollowerUseDepth')
+        trackingParams.useDepth = verifyParams.ekfFollowerUseDepth;
+    end
+    if isfield(verifyParams, 'ekfFollowerDepthSigma')
+        trackingParams.depthSigma = verifyParams.ekfFollowerDepthSigma;
+    end
+    if isfield(verifyParams, 'ekfFollowerDepthResidualGate')
+        trackingParams.depthResidualGate = verifyParams.ekfFollowerDepthResidualGate;
+    end
+    if isfield(verifyParams, 'ekfFollowerDepthMinBeamsForUpdate')
+        trackingParams.depthMinBeamsForUpdate = verifyParams.ekfFollowerDepthMinBeamsForUpdate;
+    end
 end
 end
 

@@ -17,17 +17,17 @@ params.livePlotUpdatePeriod = ekf.livePlotUpdatePeriod;
 % Waypoint controller.
 params.closeEnough = ekf.closeEnough;
 params.kPosition = ekf.kPosition;
-params.vxyMax = ekf.vxyMax;
+params.vxyMax = 0.12;
 params.epsilon = ekf.epsilon;
-params.maxWheelSpeed = ekf.maxWheelSpeed;
+params.maxWheelSpeed = 0.12;
 params.wheel2Center = ekf.wheel2Center;
-params.maxFwdVel = ekf.maxFwdVel;
+params.maxFwdVel = 0.12;
 params.maxAngVel = ekf.maxAngVel;
 params.turnInPlaceHeadingThresh = ekf.turnInPlaceHeadingThresh;
 params.turnInPlaceGain = ekf.turnInPlaceGain;
 
 % Particle set.
-params.numParticles = 400;
+params.numParticles = 500;
 params.localInitStd = [0.08; 0.08; deg2rad(12)];
 params.minPoseCovDiag = [0.01; 0.01; deg2rad(3)] .^ 2;
 
