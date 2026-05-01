@@ -5,13 +5,13 @@ params = struct();
 
 % Clearance for the robot center relative to all known wall segments.
 params.robotRadius = 0.18;
-params.wallClearance = 0.20;
+params.wallClearance = 0.17;
 params.edgeClearance = params.robotRadius + params.wallClearance;
 params.nodeClearance = params.edgeClearance;
 params.startGoalClearance = 0.05;
 
 % Roadmap node generation.
-params.cornerOffsetRadius = params.edgeClearance + 0.14;
+params.cornerOffsetRadius = params.edgeClearance + 0.12;
 params.numCornerSamples = 16;
 params.addGridSamples = true;
 params.gridSpacing = 0.45;
