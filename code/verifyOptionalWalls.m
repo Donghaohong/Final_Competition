@@ -26,7 +26,7 @@ if isempty(optWalls)
 end
 
 params = optionalWallDefaultParams(verifyParams);
-ekfParams = ekfWaypointDefaultParams(ekfParams);
+trackingParams = normalizeOptionalWallFollowerParams(ekfParams, params);
 plannerParams = knownMapPlannerDefaultParams(plannerParams);
 
 currentState = initState;
@@ -49,7 +49,7 @@ for i = 1:size(optWalls, 1)
     if isempty(observePoint)
         [currentState, dataStore, fallbackStatus] = runOptionalWallBumpFallback( ...
             Robot, currentState, wall, currentMap, beaconLoc, offset_x, offset_y, ...
-            ekfParams, plannerParams, params, dataStore, i);
+            trackingParams, plannerParams, params, dataStore, i);
         wallStatus(i) = mergeFallbackWallStatus(wallStatus(i), fallbackStatus);
         if strcmp(wallStatus(i).status, 'exists')
             confirmedOptionalWalls = [confirmedOptionalWalls; wall]; %#ok<AGROW>
@@ -70,23 +70,21 @@ for i = 1:size(optWalls, 1)
         continue;
     end
 
-    followerParams = ekfParams;
+    followerParams = trackingParams;
     followerParams.maxRunTime = params.followerMaxRunTime;
-    [ekfState, dataStore, navState] = runEkfWaypointFollower( ...
+    [trackingState, dataStore, navState] = runOptionalWallFollower( ...
         Robot, currentMap, beaconLoc, pathToObserve, offset_x, offset_y, ...
-        currentState, followerParams, dataStore);
+        currentState, followerParams, params, dataStore);
 
     wallStatus(i).pathToObserve = pathToObserve;
     wallStatus(i).navState = navState;
-    wallStatus(i).ekfPoseAtObserve = ekfState.pose;
-    wallStatus(i).ekfCovAtObserve = ekfState.poseCov;
+    wallStatus(i) = storeOptionalWallTrackingState(wallStatus(i), trackingState, 'Observe', params);
 
-    currentState.pose = ekfState.pose;
-    currentState.poseCov = ekfState.poseCov;
+    currentState = updateOptionalWallCurrentState(currentState, trackingState);
 
-    if ~ekfState.reachedAllGoals
+    if ~trackingState.reachedAllGoals
         wallStatus(i).status = 'unknown';
-        wallStatus(i).reason = ['navigationFailed_' ekfState.stopReason];
+        wallStatus(i).reason = ['navigationFailed_' trackingState.stopReason];
         if params.stopIfNavigationFails
             break;
         end
@@ -97,8 +95,7 @@ for i = 1:size(optWalls, 1)
     [currentState, dataStore, turnInfo] = turnToFacePointWithEkf( ...
         Robot, currentState, wallMid, params, dataStore);
     wallStatus(i).turnInfo = turnInfo;
-    wallStatus(i).ekfPoseAtClassify = currentState.pose;
-    wallStatus(i).ekfCovAtClassify = currentState.poseCov;
+    wallStatus(i) = storeOptionalWallCurrentState(wallStatus(i), currentState, 'Classify', params);
 
     depthObs = collectOptionalWallDepth(Robot, params);
     dataStore = appendOptionalWallDepthLog(dataStore, i, depthObs);
@@ -147,6 +144,103 @@ if isfield(params, 'wallIdxLabels') && numel(params.wallIdxLabels) >= localIdx &
 end
 end
 
+function trackingParams = normalizeOptionalWallFollowerParams(paramsIn, verifyParams)
+mode = getOptionalWallFollowerMode(verifyParams);
+if strcmp(mode, 'pf')
+    trackingParams = pfWaypointDefaultParams(paramsIn);
+else
+    trackingParams = ekfWaypointDefaultParams(paramsIn);
+end
+end
+
+function mode = getOptionalWallFollowerMode(params)
+mode = 'ekf';
+if isfield(params, 'followerMode') && ~isempty(params.followerMode)
+    mode = lower(string(params.followerMode));
+    mode = char(mode);
+end
+if ~strcmp(mode, 'pf')
+    mode = 'ekf';
+end
+end
+
+function [trackingState, dataStore, navState] = runOptionalWallFollower( ...
+    Robot, map, beaconLoc, goalWaypoints, offset_x, offset_y, currentState, followerParams, verifyParams, dataStore)
+if strcmp(getOptionalWallFollowerMode(verifyParams), 'pf')
+    [trackingState, dataStore, navState] = runPfWaypointFollower( ...
+        Robot, map, beaconLoc, goalWaypoints, offset_x, offset_y, ...
+        currentState, followerParams, dataStore);
+else
+    [trackingState, dataStore, navState] = runEkfWaypointFollower( ...
+        Robot, map, beaconLoc, goalWaypoints, offset_x, offset_y, ...
+        currentState, followerParams, dataStore);
+end
+end
+
+function currentState = updateOptionalWallCurrentState(currentState, trackingState)
+currentState.pose = trackingState.pose;
+currentState.poseCov = trackingState.poseCov;
+if isfield(trackingState, 'particles')
+    currentState.particles = trackingState.particles;
+end
+if isfield(trackingState, 'weights')
+    currentState.weights = trackingState.weights;
+end
+end
+
+function currentState = refreshOptionalWallPfParticles(currentState, params)
+if ~strcmp(getOptionalWallFollowerMode(params), 'pf')
+    return;
+end
+
+if isfield(currentState, 'particles') && ~isempty(currentState.particles)
+    numParticles = size(currentState.particles, 1);
+else
+    numParticles = 192;
+end
+
+pose = currentState.pose(:).';
+stdXY = 0.025;
+stdTheta = deg2rad(4);
+currentState.particles = repmat(pose, numParticles, 1);
+currentState.particles(:, 1) = currentState.particles(:, 1) + stdXY * randn(numParticles, 1);
+currentState.particles(:, 2) = currentState.particles(:, 2) + stdXY * randn(numParticles, 1);
+currentState.particles(:, 3) = wrapToPiLocal(currentState.particles(:, 3) + stdTheta * randn(numParticles, 1));
+currentState.weights = ones(numParticles, 1) / numParticles;
+end
+
+function status = storeOptionalWallTrackingState(status, trackingState, suffix, params)
+if strcmp(getOptionalWallFollowerMode(params), 'pf')
+    status.(['pfPoseAt' suffix]) = trackingState.pose;
+    status.(['pfCovAt' suffix]) = trackingState.poseCov;
+    if isfield(trackingState, 'particles')
+        status.(['pfParticlesAt' suffix]) = trackingState.particles;
+    end
+    if isfield(trackingState, 'weights')
+        status.(['pfWeightsAt' suffix]) = trackingState.weights;
+    end
+else
+    status.(['ekfPoseAt' suffix]) = trackingState.pose;
+    status.(['ekfCovAt' suffix]) = trackingState.poseCov;
+end
+end
+
+function status = storeOptionalWallCurrentState(status, currentState, suffix, params)
+if strcmp(getOptionalWallFollowerMode(params), 'pf')
+    status.(['pfPoseAt' suffix]) = currentState.pose;
+    status.(['pfCovAt' suffix]) = currentState.poseCov;
+    if isfield(currentState, 'particles')
+        status.(['pfParticlesAt' suffix]) = currentState.particles;
+    end
+    if isfield(currentState, 'weights')
+        status.(['pfWeightsAt' suffix]) = currentState.weights;
+    end
+else
+    status.(['ekfPoseAt' suffix]) = currentState.pose;
+    status.(['ekfCovAt' suffix]) = currentState.poseCov;
+end
+end
+
 function status = emptyWallStatus()
 status = struct( ...
     'wallIdx', NaN, ...
@@ -163,6 +257,14 @@ status = struct( ...
     'ekfCovAtObserve', [], ...
     'ekfPoseAtClassify', [], ...
     'ekfCovAtClassify', [], ...
+    'pfPoseAtObserve', [], ...
+    'pfCovAtObserve', [], ...
+    'pfParticlesAtObserve', [], ...
+    'pfWeightsAtObserve', [], ...
+    'pfPoseAtClassify', [], ...
+    'pfCovAtClassify', [], ...
+    'pfParticlesAtClassify', [], ...
+    'pfWeightsAtClassify', [], ...
     'turnInfo', struct(), ...
     'numFrames', 0, ...
     'numRaysUsed', 0, ...
@@ -307,6 +409,7 @@ end
 stopRobotSafe(Robot);
 currentState.pose = mu;
 currentState.poseCov = sigma;
+currentState = refreshOptionalWallPfParticles(currentState, params);
 
 if ~isfield(dataStore, 'optionalWallTurn') || isempty(dataStore.optionalWallTurn)
     dataStore.optionalWallTurn = [];
@@ -469,6 +572,7 @@ end
 probe.endPose = mu;
 currentState.pose = mu;
 currentState.poseCov = sigma;
+currentState = refreshOptionalWallPfParticles(currentState, params);
 
 if ~isfield(dataStore, 'optionalWallBumpProbe') || isempty(dataStore.optionalWallBumpProbe)
     dataStore.optionalWallBumpProbe = [];
@@ -480,7 +584,7 @@ end
 
 function [currentState, dataStore, fallbackStatus] = runOptionalWallBumpFallback( ...
     Robot, currentState, wall, currentMap, beaconLoc, offset_x, offset_y, ...
-    ekfParams, plannerParams, verifyParams, dataStore, wallIdx)
+    trackingParams, plannerParams, verifyParams, dataStore, wallIdx)
 fallbackStatus = emptyWallStatus();
 fallbackStatus.wallIdx = wallIdx;
 fallbackStatus.wall = wall;
@@ -509,20 +613,18 @@ if isempty(pathToProbe) || ~planInfo.success
     return;
 end
 
-followerParams = ekfParams;
+followerParams = trackingParams;
 followerParams.maxRunTime = verifyParams.bumpFallbackMaxRunTime;
-[ekfState, dataStore, navState] = runEkfWaypointFollower( ...
+[trackingState, dataStore, navState] = runOptionalWallFollower( ...
     Robot, currentMap, beaconLoc, pathToProbe, offset_x, offset_y, ...
-    currentState, followerParams, dataStore);
+    currentState, followerParams, verifyParams, dataStore);
 
 fallbackStatus.navState = navState;
-fallbackStatus.ekfPoseAtObserve = ekfState.pose;
-fallbackStatus.ekfCovAtObserve = ekfState.poseCov;
-currentState.pose = ekfState.pose;
-currentState.poseCov = ekfState.poseCov;
+fallbackStatus = storeOptionalWallTrackingState(fallbackStatus, trackingState, 'Observe', verifyParams);
+currentState = updateOptionalWallCurrentState(currentState, trackingState);
 
-if ~ekfState.reachedAllGoals
-    fallbackStatus.reason = ['bumpFallbackNavigationFailed_' ekfState.stopReason];
+if ~trackingState.reachedAllGoals
+    fallbackStatus.reason = ['bumpFallbackNavigationFailed_' trackingState.stopReason];
     return;
 end
 
@@ -530,8 +632,7 @@ wallMid = wallMidpoint(wall);
 [currentState, dataStore, turnInfo] = turnToFacePointWithEkf( ...
     Robot, currentState, wallMid, verifyParams, dataStore);
 fallbackStatus.turnInfo = turnInfo;
-fallbackStatus.ekfPoseAtClassify = currentState.pose;
-fallbackStatus.ekfCovAtClassify = currentState.poseCov;
+fallbackStatus = storeOptionalWallCurrentState(fallbackStatus, currentState, 'Classify', verifyParams);
 
 [currentState, dataStore, bumpProbe] = runOptionalWallBumpProbe( ...
     Robot, currentState, wall, verifyParams, dataStore, wallIdx);

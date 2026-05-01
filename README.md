@@ -15,6 +15,7 @@ This folder is a clean extraction of the current final competition code.
 - `testInitializeLocalizationPracticeMap(Robot)`
 - `testEkfWaypointFollowingPracticeMap(Robot, goalWaypoints)`
 - `testPfWaypointFollowingPracticeMap(Robot, goalWaypoints)`
+- `testPfWaypointOptionalPracticeMap(Robot, goalWaypoints)`
 - `testOptionalWallVerificationPracticeMap(Robot)`
 - `testIntegratedWaypointOptionalPracticeMap(Robot, goalWaypoints)`
 
@@ -35,6 +36,10 @@ Optional-wall contact probing uses
 `testPfWaypointFollowingPracticeMap` is a parallel particle-filter waypoint
 following test entry for A/B comparison against the EKF follower. It does not
 replace the integrated EKF flow.
+
+`testPfWaypointOptionalPracticeMap` uses PF for waypoint following and also sets
+optional-wall verification to use the PF follower when driving to observation or
+probe points.
 
 ## Notes
 

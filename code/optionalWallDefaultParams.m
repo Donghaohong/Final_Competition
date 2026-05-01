@@ -67,6 +67,7 @@ params.bumpFallbackMaxRunTime = 90.0;
 
 params.debugPrint = true;
 params.wallIdxLabels = [];
+params.followerMode = 'ekf';
 
 if nargin < 1 || isempty(override)
     return;

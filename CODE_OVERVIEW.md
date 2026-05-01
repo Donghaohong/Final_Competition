@@ -61,6 +61,24 @@ Flow:
 This is a parallel test path for A/B comparison against the EKF follower. It
 does not replace the current integrated EKF flow.
 
+### `testPfWaypointOptionalPracticeMap.m`
+
+PracticeMap entry for testing PF waypoint following together with optional-wall
+verification.
+
+Flow:
+
+1. Load `PracticeMap2026.mat`.
+2. Run `initializeLocalization`.
+3. Plan and execute waypoint following with `runPfWaypointFollower`.
+4. Continue from the final PF state into `verifyOptionalWalls`.
+5. Set `verifyParams.followerMode = 'pf'`, so optional-wall travel to
+   observation/probe points uses the PF follower instead of the EKF follower.
+6. Save `latestPfWaypointOptionalPracticeRun.mat`.
+
+Use this to test the PF pipeline with optional-wall detection without modifying
+the existing EKF integrated entry.
+
 ### `testOptionalWallVerificationPracticeMap.m`
 
 PracticeMap entry for testing optional-wall verification by itself.
@@ -530,6 +548,10 @@ The current classifier uses both:
 - depth residuals;
 - bump probe contact / no-contact evidence.
 
+When `verifyParams.followerMode = 'pf'`, this function uses
+`runPfWaypointFollower` to drive to observation/probe points. The default mode is
+still EKF, so existing EKF optional-wall tests keep the same behavior.
+
 ### `optionalWallDefaultParams.m`
 
 Default parameters for optional-wall verification.
@@ -782,6 +804,17 @@ testPfWaypointFollowingPracticeMap
   -> plotPfWaypointResult
 ```
 
+### PF waypoint plus optional-wall test flow
+
+```text
+testPfWaypointOptionalPracticeMap
+  -> initializeLocalization
+  -> planWaypointSequenceKnownMap
+  -> runPfWaypointFollower
+  -> verifyOptionalWalls with followerMode='pf'
+  -> latestPfWaypointOptionalPracticeRun.mat
+```
+
 ### Integrated test flow
 
 ```text
@@ -808,4 +841,3 @@ testIntegratedWaypointOptionalPracticeMap
 - Intermediate planner nodes do not beep; real high-level waypoints beep.
 - Normal-navigation bump recovery uses `recoveryBackDistance`.
 - Optional-wall contact probing uses `bumpProbeBackupDistance`.
-
