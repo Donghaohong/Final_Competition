@@ -27,7 +27,7 @@ params.turnInPlaceHeadingThresh = ekf.turnInPlaceHeadingThresh;
 params.turnInPlaceGain = ekf.turnInPlaceGain;
 
 % Particle set.
-params.numParticles = 256;
+params.numParticles = 400;
 params.localInitStd = [0.08; 0.08; deg2rad(12)];
 params.minPoseCovDiag = [0.01; 0.01; deg2rad(3)] .^ 2;
 
@@ -69,8 +69,8 @@ params.wallThickness = init.wallThickness;
 params.weightFloor = init.weightFloor;
 params.uniformMix = init.uniformMix;
 params.resampleESSFrac = init.resampleESSFrac;
-params.rougheningXYStd = 0.004;
-params.rougheningThetaStd = deg2rad(0.35);
+params.rougheningXYStd = 0.006;
+params.rougheningThetaStd = deg2rad(0.60);
 
 % Safety and temporary recovery.
 params.stopOnBump = ekf.stopOnBump;

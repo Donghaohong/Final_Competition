@@ -4,7 +4,7 @@ function params = initDefaultParams(initParams)
 params = struct();
 
 % Particle prior over start hypotheses.
-params.numParticles = 192;
+params.numParticles = 400;
 params.numHeadingBins = 16;
 params.startPosStd = 0.035;
 params.startHeadingJitter = deg2rad(6);
