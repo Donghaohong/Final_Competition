@@ -16,6 +16,7 @@ This folder is a clean extraction of the current final competition code.
 - `testEkfWaypointFollowingPracticeMap(Robot, goalWaypoints)`
 - `testPfWaypointFollowingPracticeMap(Robot, goalWaypoints)`
 - `testPfWaypointOptionalPracticeMap(Robot, goalWaypoints)`
+- `testPfWaypointEcOptionalPracticeMap(Robot, goalWaypoints, ecGoalWaypoints)`
 - `testOptionalWallVerificationPracticeMap(Robot)`
 - `testIntegratedWaypointOptionalPracticeMap(Robot, goalWaypoints)`
 
@@ -40,6 +41,11 @@ replace the integrated EKF flow.
 `testPfWaypointOptionalPracticeMap` uses PF for waypoint following and also sets
 optional-wall verification to use the PF follower when driving to observation or
 probe points.
+
+`testPfWaypointEcOptionalPracticeMap` runs PF through normal waypoints first,
+then verifies optional walls with the PF follower, and finally visits EC
+waypoints in `ECwaypoints` file order using paths planned on the updated
+`verifiedMap`.
 
 ## Notes
 

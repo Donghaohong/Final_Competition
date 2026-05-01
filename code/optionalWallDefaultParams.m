@@ -16,6 +16,12 @@ params.observeAlignmentPenalty = 0.20;
 % Motion to observation point.
 params.followerMaxRunTime = 140.0;
 params.stopIfNavigationFails = false;
+% PF navigation to optional-wall observe/probe points should not use depth by
+% default: the candidate wall is not in the map yet, so depth can pull PF to a
+% wrong known-wall explanation before classification.
+params.pfFollowerUseDepth = false;
+params.pfFollowerDepthWeight = 0.0;
+params.pfFollowerUseBeacons = true;
 
 % Turn-to-wall behavior.
 params.turnMaxTime = 8.0;
@@ -54,7 +60,7 @@ params.bumpProbeBeyondWall = 0.28;
 params.bumpProbeMaxTravel = 0.95;
 params.bumpProbeRobotRadius = 0.17;
 params.bumpProbeMinTravelForWall = 0.06;
-params.bumpProbeBackupDistance = 0.45;
+params.bumpProbeBackupDistance = 0.60;
 params.bumpProbeBackupSpeed = -0.06;
 
 % If the normal depth observation point is unreachable, try a direct low-speed

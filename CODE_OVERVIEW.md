@@ -79,6 +79,28 @@ Flow:
 Use this to test the PF pipeline with optional-wall detection without modifying
 the existing EKF integrated entry.
 
+### `testPfWaypointEcOptionalPracticeMap.m`
+
+PracticeMap entry for the PF three-stage strategy: normal waypoints first,
+optional-wall verification second, EC waypoints last.
+
+Flow:
+
+1. Load `PracticeMap2026.mat`, including `ECwaypoints`.
+2. Run `initializeLocalization`.
+3. Visit normal waypoints with `runPfWaypointFollower`.
+4. Run `verifyOptionalWalls` with `verifyParams.followerMode = 'pf'`.
+5. Update `verifiedMap` with optional walls that were confirmed present.
+6. Plan EC waypoints in the `ECwaypoints` file order from the post-verification
+   PF pose, planned against `verifiedMap`.
+7. Visit reachable EC waypoints with `runPfWaypointFollower` using
+   `verifiedMap`.
+8. Save `latestPfWaypointEcOptionalPracticeRun.mat`.
+
+Use this to test the scoring-oriented sequence where normal waypoints are
+completed first, optional walls are classified before EC planning, and EC paths
+respect the updated map.
+
 ### `testOptionalWallVerificationPracticeMap.m`
 
 PracticeMap entry for testing optional-wall verification by itself.
@@ -813,6 +835,19 @@ testPfWaypointOptionalPracticeMap
   -> runPfWaypointFollower
   -> verifyOptionalWalls with followerMode='pf'
   -> latestPfWaypointOptionalPracticeRun.mat
+```
+
+### PF normal waypoint, optional-wall, plus EC waypoint test flow
+
+```text
+testPfWaypointEcOptionalPracticeMap
+  -> initializeLocalization
+  -> planWaypointSequenceKnownMap for normal waypoints
+  -> runPfWaypointFollower
+  -> verifyOptionalWalls with followerMode='pf'
+  -> EC path planning in map-file order on verifiedMap
+  -> runPfWaypointFollower with verifiedMap
+  -> latestPfWaypointEcOptionalPracticeRun.mat
 ```
 
 ### Integrated test flow

@@ -148,6 +148,15 @@ function trackingParams = normalizeOptionalWallFollowerParams(paramsIn, verifyPa
 mode = getOptionalWallFollowerMode(verifyParams);
 if strcmp(mode, 'pf')
     trackingParams = pfWaypointDefaultParams(paramsIn);
+    if isfield(verifyParams, 'pfFollowerUseDepth')
+        trackingParams.useDepth = verifyParams.pfFollowerUseDepth;
+    end
+    if isfield(verifyParams, 'pfFollowerDepthWeight')
+        trackingParams.depthWeight = verifyParams.pfFollowerDepthWeight;
+    end
+    if isfield(verifyParams, 'pfFollowerUseBeacons')
+        trackingParams.useBeacons = verifyParams.pfFollowerUseBeacons;
+    end
 else
     trackingParams = ekfWaypointDefaultParams(paramsIn);
 end
