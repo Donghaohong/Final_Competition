@@ -14,10 +14,10 @@ params.livePlotUpdatePeriod = 0.35;
 % Waypoint controller.
 params.closeEnough = 0.20;
 params.kPosition = 0.8;
-params.vxyMax = 0.16;
+params.vxyMax = 0.13;
 params.epsilon = 0.45;
-params.maxWheelSpeed = 0.10;
-params.wheel2Center = 0.16;
+params.maxWheelSpeed = 0.13;
+params.wheel2Center = 0.13;
 params.maxFwdVel = 0.16;
 params.maxAngVel = 0.50;
 params.turnInPlaceHeadingThresh = deg2rad(55);
