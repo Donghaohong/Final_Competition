@@ -53,10 +53,12 @@ try
     dataStore.initState = initState;
     dataStore = syncFinalGlobal(dataStore, 'initialized');
 
-    normalGoals = defaultCompetitionGoals(S.waypoints, initState.startWaypointIdx);
+    plannerParams = knownMapPlannerDefaultParams();
+    originalNormalGoals = defaultCompetitionGoals(S.waypoints, initState.startWaypointIdx);
+    [normalGoals, normalGoalOrder, normalGoalOrderInfo] = planGoalVisitOrderNearestNeighbor( ...
+        initState.pose(1:2).', originalNormalGoals, S.map, plannerParams);
     ecGoals = getFieldOrDefault(S, 'ECwaypoints', zeros(0, 2));
 
-    plannerParams = knownMapPlannerDefaultParams();
     ekfParams = ekfWaypointDefaultParams();
     ekfParams.maxDepthRange = 10.0;
     ekfParams.minDepthRange = 0.175;
@@ -132,10 +134,16 @@ try
     ecEkfState = struct();
     ecNavState = struct();
 
+    originalECGoals = ecGoals;
+    ecGoalOrder = [];
+    ecGoalOrderInfo = struct('reason', 'notRun');
+
     if isempty(dataStore.final.stopReason) && ~isempty(ecGoals) && remainingTime(maxTime, runTimer) > 8.0
         [ecPlanningStartState, postOptionalWallPlanningStartInfo] = ...
             selectPostOptionalWallPlanningState( ...
                 currentState, wallStatus, postNormalSafeState, ecGoals, verifiedMap, plannerParams);
+        [ecGoals, ecGoalOrder, ecGoalOrderInfo] = planGoalVisitOrderNearestNeighbor( ...
+            ecPlanningStartState.pose(1:2).', originalECGoals, verifiedMap, plannerParams);
         [ecPlannedPath, ecPlannerInfo] = planWaypointSequenceKnownMap( ...
             ecPlanningStartState.pose(1:2).', ecGoals, verifiedMap, plannerParams);
         [ecPlannedPath, ecPlannerInfo] = prependBridgePathToEcPlan( ...
@@ -164,7 +172,10 @@ try
         dataStore = syncFinalGlobal(dataStore, 'ecWaypointsDone');
     end
 
+    dataStore.originalNormalGoals = originalNormalGoals;
     dataStore.normalGoals = normalGoals;
+    dataStore.normalGoalOrder = normalGoalOrder;
+    dataStore.normalGoalOrderInfo = normalGoalOrderInfo;
     dataStore.normalPlannedPath = normalPlannedPath;
     dataStore.normalPlannerInfo = normalPlannerInfo;
     dataStore.normalSnapInfo = normalSnapInfo;
@@ -173,7 +184,10 @@ try
     dataStore.postNormalSafeState = postNormalSafeState;
     dataStore.wallStatus = wallStatus;
     dataStore.verifiedMap = verifiedMap;
+    dataStore.originalECGoals = originalECGoals;
     dataStore.ecGoals = ecGoals;
+    dataStore.ecGoalOrder = ecGoalOrder;
+    dataStore.ecGoalOrderInfo = ecGoalOrderInfo;
     dataStore.ecPlanningStartState = ecPlanningStartState;
     dataStore.postOptionalWallPlanningStartInfo = postOptionalWallPlanningStartInfo;
     dataStore.ecPlannedPath = ecPlannedPath;
@@ -296,6 +310,65 @@ if isfinite(startWaypointIdx) && startWaypointIdx >= 1 && startWaypointIdx <= si
 end
 end
 
+function [orderedGoals, visitOrder, info] = planGoalVisitOrderNearestNeighbor( ...
+    startXY, goals, map, plannerParams)
+% Order scoring goals greedily by planned path length on the provided map.
+orderedGoals = zeros(0, 2);
+visitOrder = zeros(0, 1);
+info = struct('reason', 'ok', 'skipped', zeros(0, 3), ...
+    'segmentLengths', zeros(0, 1));
+
+if isempty(goals)
+    info.reason = 'noGoals';
+    return;
+end
+
+remainingIdx = (1:size(goals, 1)).';
+currentXY = startXY(:).';
+
+while ~isempty(remainingIdx)
+    bestLocal = NaN;
+    bestLength = inf;
+    bestReason = '';
+
+    for k = 1:numel(remainingIdx)
+        goalIdx = remainingIdx(k);
+        [path, planInfo] = planPathKnownMap(currentXY, goals(goalIdx, :), map, plannerParams);
+        if isempty(path) || ~planInfo.success
+            if isempty(bestReason)
+                bestReason = planInfo.reason;
+            end
+            continue;
+        end
+        candidateLength = pathLengthLocal(path);
+        if candidateLength < bestLength
+            bestLength = candidateLength;
+            bestLocal = k;
+        end
+    end
+
+    if isnan(bestLocal)
+        for k = 1:numel(remainingIdx)
+            goalIdx = remainingIdx(k);
+            info.skipped(end + 1, :) = [goalIdx goals(goalIdx, :)];
+        end
+        if isempty(orderedGoals)
+            info.reason = ['noReachableGoals_' bestReason];
+        else
+            info.reason = ['someGoalsUnreachable_' bestReason];
+        end
+        return;
+    end
+
+    selectedIdx = remainingIdx(bestLocal);
+    orderedGoals(end + 1, :) = goals(selectedIdx, :); %#ok<AGROW>
+    visitOrder(end + 1, 1) = selectedIdx; %#ok<AGROW>
+    info.segmentLengths(end + 1, 1) = bestLength;
+    currentXY = goals(selectedIdx, :);
+    remainingIdx(bestLocal) = [];
+end
+end
+
 function value = getFieldOrDefault(S, fieldName, defaultValue)
 if isstruct(S) && isfield(S, fieldName)
     value = S.(fieldName);
@@ -380,7 +453,6 @@ end
 function [selectedState, info] = selectPostOptionalWallPlanningState( ...
     currentState, wallStatus, postNormalSafeState, ecGoals, map, plannerParams)
 candidates = {};
-candidates{end + 1} = struct('source', 'postNormalSafeState', 'state', postNormalSafeState);
 candidates{end + 1} = struct('source', 'currentState', 'state', currentState);
 for i = numel(wallStatus):-1:1
     status = wallStatus(i);
@@ -400,6 +472,7 @@ for i = numel(wallStatus):-1:1
         candidates{end + 1} = struct('source', sprintf('wall%dClassify', i), 'state', candidateState); %#ok<AGROW>
     end
 end
+candidates{end + 1} = struct('source', 'postNormalSafeState', 'state', postNormalSafeState);
 info = struct('selectedSource', 'none', 'selectedPose', currentState.pose(:).', ...
     'numReachableEC', 0, 'candidateReasons', {cell(0, 3)});
 selectedState = currentState;

@@ -292,7 +292,7 @@ end
 
 function candidates = buildPostOptionalWallStartCandidates(currentState, wallStatus, fallbackState)
 candidates = struct('source', {}, 'state', {});
-candidates(end + 1) = struct('source', 'postNormalSafeState', 'state', fallbackState);
+candidates(end + 1) = struct('source', 'postOptionalWallCurrentState', 'state', currentState);
 
 for i = numel(wallStatus):-1:1
     status = wallStatus(i);
@@ -321,7 +321,7 @@ for i = numel(wallStatus):-1:1
     end
 end
 
-candidates(end + 1) = struct('source', 'postOptionalWallCurrentState', 'state', currentState);
+candidates(end + 1) = struct('source', 'postNormalSafeState', 'state', fallbackState);
 end
 
 function state = stateFromOptionalWallStatus(baseState, status, suffix)

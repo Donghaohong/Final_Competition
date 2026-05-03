@@ -13,6 +13,7 @@ params.debugPrint = ekf.debugPrint;
 params.debugPrintEvery = ekf.debugPrintEvery;
 params.enableLivePlot = false;
 params.livePlotUpdatePeriod = ekf.livePlotUpdatePeriod;
+params.disableBeep = ekf.disableBeep;
 
 % Waypoint controller.
 params.closeEnough = ekf.closeEnough;

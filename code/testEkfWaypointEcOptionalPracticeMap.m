@@ -272,7 +272,6 @@ end
 function [selectedState, info] = selectPostOptionalWallPlanningState( ...
     currentState, wallStatus, postNormalSafeState, ecGoals, map, plannerParams)
 candidates = {};
-candidates{end + 1} = struct('source', 'postNormalSafeState', 'state', postNormalSafeState);
 candidates{end + 1} = struct('source', 'currentState', 'state', currentState);
 
 for i = numel(wallStatus):-1:1
@@ -293,6 +292,7 @@ for i = numel(wallStatus):-1:1
         candidates{end + 1} = struct('source', sprintf('wall%dClassify', i), 'state', candidateState); %#ok<AGROW>
     end
 end
+candidates{end + 1} = struct('source', 'postNormalSafeState', 'state', postNormalSafeState);
 
 info = struct('selectedSource', 'none', 'selectedPose', currentState.pose(:).', ...
     'numReachableEC', 0, 'candidateReasons', {cell(0, 3)});

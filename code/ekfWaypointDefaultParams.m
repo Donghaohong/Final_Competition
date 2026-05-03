@@ -10,6 +10,7 @@ params.debugPrint = true;
 params.debugPrintEvery = 10;
 params.enableLivePlot = false;
 params.livePlotUpdatePeriod = 0.35;
+params.disableBeep = false;
 
 % Waypoint controller.
 params.closeEnough = 0.20;

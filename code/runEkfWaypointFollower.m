@@ -104,7 +104,7 @@ else
         navState.finalDistanceToGoal = finalDist;
         newlyReachedGoals = navState.reachedGoals & ~prevReachedGoals;
         navState.beepMask = normalizeMaskLength(navState.beepMask, numel(navState.reachedGoals), false);
-        if any(newlyReachedGoals & navState.beepMask)
+        if ~params.disableBeep && any(newlyReachedGoals & navState.beepMask)
             beepRobotSafe(Robot);
         end
 
