@@ -16,9 +16,9 @@ params.observeAlignmentPenalty = 0.20;
 % Motion to observation point.
 params.followerMaxRunTime = 140.0;
 params.stopIfNavigationFails = false;
-params.navigationEdgeClearance = 0.42;
-params.navigationNodeClearance = 0.42;
-params.navigationCornerOffsetRadius = 0.54;
+params.navigationEdgeClearance = 0.35;
+params.navigationNodeClearance = 0.35;
+params.navigationCornerOffsetRadius = 0.47;
 params.navigationStartGoalClearance = 0.08;
 % Use depth lightly while navigating to optional-wall observe/probe points.
 % A low weight helps PF localization in weak-beacon regions without letting an
