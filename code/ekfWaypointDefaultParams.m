@@ -4,7 +4,7 @@ function params = ekfWaypointDefaultParams(override)
 params = struct();
 
 % Runtime and loop timing.
-params.maxRunTime = 60.0;
+params.maxRunTime = 500.0;
 params.controlDt = 0.10;
 params.debugPrint = true;
 params.debugPrintEvery = 10;
@@ -56,8 +56,8 @@ params.wallThickness = 0.10;
 params.stopOnBump = true;
 params.stopIfNoGoals = true;
 params.enableBumpRecovery = true;
-params.maxBumpRecoveries = 8;
-params.recoveryBackDistance = 0.70;
+params.maxBumpRecoveries = 8; % 8 
+params.recoveryBackDistance = 0.20; % was 0.7
 params.recoveryTurnAngle = deg2rad(90);
 params.recoveryBackVel = -0.08;
 params.recoveryTurnVel = 0.45;
@@ -68,6 +68,9 @@ params.recoveryEscapeDistances = [0.35 0.45 0.60 0.75];
 params.recoveryEscapeAngleOffsets = deg2rad([0 25 -25 50 -50 80 -80 120 -120 180]);
 params.recoveryEscapeMinWallClearance = 0.35;
 params.recoveryEscapeBoundsMargin = 0.08;
+params.recoveryForwardDistance = 0.1;     % meters
+params.recoveryForwardVel = 0.13;          % m/s
+params.recoveryMaxForwardTime = 2.0;       % seconds
 
 if nargin < 1 || isempty(override)
     return;

@@ -31,8 +31,16 @@ sequenceInfo.segmentInfo = segmentInfo;
 sequenceInfo.highLevelGoals = goalWaypoints;
 sequenceInfo.beepMask = false(size(plannedPath, 1), 1);
 
+remainingGoals = goalWaypoints;
+
 for k = 1:size(goalWaypoints, 1)
-    goal = goalWaypoints(k, :);
+    % sorting points by nearest neighbor 
+    distances = sqrt(sum((remainingGoals - currentStart).^2, 2));
+    [~, nearestLocalIdx] = min(distances);
+
+
+    goal =remainingGoals(nearestLocalIdx, :);
+
     [segmentPath, info] = planPathKnownMap(currentStart, goal, map, plannerParams);
     segmentInfo{k} = info;
 
@@ -47,6 +55,7 @@ for k = 1:size(goalWaypoints, 1)
     end
     sequenceInfo.beepMask = [sequenceInfo.beepMask; false(max(0, size(segmentPath, 1) - 2), 1); true];
     currentStart = goal;
+    remainingGoals(nearestLocalIdx, :) = [];
 end
 
 sequenceInfo.success = true;

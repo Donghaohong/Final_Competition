@@ -732,6 +732,9 @@ turnDir = chooseRecoveryTurnDirection(bump);
 [mu, sigma, turnedAngle] = executeRecoveryTurn(Robot, mu, sigma, turnDir, params);
 stopRobotSafe(Robot);
 
+[mu, sigma, forwardDistance] = executeRecoveryForwardNudge(Robot, mu, sigma, params);
+
+stopRobotSafe(Robot);
 if navState.currentGoalIdx > size(goalWaypoints, 1)
     recoveryOk = true;
     dataStore = appendRecoveryLog(dataStore, tNow, navState.bumpRecoveryCount, bump, backedDistance, turnedAngle, recoveryOk);
@@ -880,6 +883,32 @@ while abs(turnedAngle) < targetTurn && toc(timerObj) < params.recoveryMaxTurnTim
 end
 
 stopRobotSafe(Robot);
+end
+
+
+function [mu, sigma, forwardDistance] = executeRecoveryForwardNudge(Robot, mu, sigma, params)
+
+forwardDistance = 0;
+timerObj = tic;
+
+while forwardDistance < params.recoveryForwardDistance && ...
+        toc(timerObj) < params.recoveryMaxForwardTime
+
+    SetFwdVelAngVelCreate(Robot, params.recoveryForwardVel, 0);
+    pause(params.controlDt);
+
+    odom = readRecoveryOdom(Robot);
+
+    if odom.valid
+        [mu, sigma] = predictRecoveryState(mu, sigma, odom, params);
+        forwardDistance = forwardDistance + odom.d;
+    else
+        forwardDistance = forwardDistance + params.recoveryForwardVel * params.controlDt;
+    end
+end
+
+stopRobotSafe(Robot);
+
 end
 
 function turnDir = chooseRecoveryTurnDirection(bump)

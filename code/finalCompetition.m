@@ -10,7 +10,7 @@ function [dataStoreOut] = finalCompetition(Robot, maxTime, offset_x, offset_y)
 global dataStore; %#ok<GVMIS>
 
 if nargin < 2 || isempty(maxTime)
-    maxTime = 420.0;
+    maxTime = 420; %% 420
 end
 if nargin < 3 || isempty(offset_x)
     offset_x = 0.0;
