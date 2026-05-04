@@ -34,6 +34,20 @@ currentState = initState;
 confirmedOptionalWalls = zeros(0, 4);
 wallStatus = repmat(emptyWallStatus(), size(optWalls, 1), 1);
 
+%compute wall mdpoints 
+wallMids = 0.5 * [optWalls(:,1) + optWalls(:,3), ...
+                  optWalls(:,2) + optWalls(:,4)];
+
+startXY = initState.pose(1:2).';
+wallDistances = sqrt(sum((wallMids - startXY).^2, 2));
+
+[~, wallOrder] = sort(wallDistances);
+originalWallIdx = 1:size(optWalls, 1);
+optWalls = optWalls(wallOrder, :);
+
+params.wallIdxLabels = originalWallIdx(wallOrder);
+
+
 for i = 1:size(optWalls, 1)
     currentMap = [map; confirmedOptionalWalls];
     wall = optWalls(i, :);
