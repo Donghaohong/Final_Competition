@@ -68,9 +68,6 @@ params.recoveryEscapeDistances = [0.35 0.45 0.60 0.75];
 params.recoveryEscapeAngleOffsets = deg2rad([0 25 -25 50 -50 80 -80 120 -120 180]);
 params.recoveryEscapeMinWallClearance = 0.35;
 params.recoveryEscapeBoundsMargin = 0.08;
-params.recoveryAddBumpObstacle = true;
-params.recoveryBumpObstacleForwardOffset = 0.18;
-params.recoveryBumpObstacleLength = 0.80;
 
 if nargin < 1 || isempty(override)
     return;

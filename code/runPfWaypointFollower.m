@@ -160,7 +160,7 @@ end
 function dataStore = ensurePfDataStoreFields(dataStore)
 numericFields = {'truthPose', 'odometry', 'rsdepth', 'bump', 'beacon', ...
                  'pfMu', 'pfCommand', 'pfGoal', 'pfUpdateStats', ...
-                 'pfRecovery', 'pfRecoveryEscape', 'pfRecoveryObstacle'};
+                 'pfRecovery', 'pfRecoveryEscape'};
 for i = 1:numel(numericFields)
     name = numericFields{i};
     if ~isfield(dataStore, name) || isempty(dataStore.(name))
@@ -463,93 +463,16 @@ cmdW = max(-params.maxAngVel, min(params.maxAngVel, cmdW));
 end
 
 function [particles, weights, mu, sigma, goalWaypoints, navState, dataStore, recoveryOk] = ...
-    runPfTemporaryBumpRecovery(Robot, particles, weights, goalWaypoints, navState, map, bump, params, dataStore, tNow)
-recoveryOk = false;
+    runPfTemporaryBumpRecovery(Robot, particles, weights, goalWaypoints, navState, ~, bump, params, dataStore, tNow)
 stopRobotSafe(Robot);
 pause(0.05);
 
-preRecoveryMu = estimatePfPoseAndCov(particles, weights, params);
-[recoveryMap, bumpObstacle] = addPfBumpObstacleToPlanningMap(map, preRecoveryMu, bump, params);
 [particles, weights, backedDistance] = executePfRecoveryBackUp(Robot, particles, weights, params);
-turnDir = choosePfRecoveryTurnDirection(bump);
-[particles, weights, turnedAngle] = executePfRecoveryTurn(Robot, particles, weights, turnDir, params);
 stopRobotSafe(Robot);
 [mu, sigma] = estimatePfPoseAndCov(particles, weights, params);
-dataStore = appendPfRecoveryObstacleLog(dataStore, tNow, navState.bumpRecoveryCount, bumpObstacle);
-
-if navState.currentGoalIdx > size(goalWaypoints, 1)
-    recoveryOk = true;
-    dataStore = appendPfRecoveryLog(dataStore, tNow, navState.bumpRecoveryCount, bump, backedDistance, turnedAngle, recoveryOk);
-    return;
-end
-
-currentGoal = goalWaypoints(navState.currentGoalIdx, :);
-plannerParams = knownMapPlannerDefaultParams();
-[replannedPath, plannerInfo] = planPathKnownMap(mu(1:2).', currentGoal, recoveryMap, plannerParams);
-
-if isempty(replannedPath) || ~plannerInfo.success
-    [replannedPath, escapeInfo] = planPfRecoveryEscapePath(mu, currentGoal, recoveryMap, plannerParams, params);
-    dataStore = appendPfRecoveryEscapeLog(dataStore, tNow, navState.bumpRecoveryCount, escapeInfo);
-    if isempty(replannedPath) || ~escapeInfo.success
-        dataStore = appendPfRecoveryLog(dataStore, tNow, navState.bumpRecoveryCount, bump, backedDistance, turnedAngle, false);
-        return;
-    end
-    plannerInfo = escapeInfo;
-end
-plannerInfo.recoveryBumpObstacle = bumpObstacle;
-plannerInfo.recoveryPlanningMapSize = size(recoveryMap, 1);
-
-remainingOriginalGoals = goalWaypoints(navState.currentGoalIdx + 1:end, :);
-currentGoalShouldBeep = false;
-if isfield(navState, 'beepMask') && navState.currentGoalIdx <= numel(navState.beepMask)
-    currentGoalShouldBeep = navState.beepMask(navState.currentGoalIdx);
-end
-remainingBeepMask = false(size(remainingOriginalGoals, 1), 1);
-if isfield(navState, 'beepMask') && navState.currentGoalIdx < numel(navState.beepMask)
-    remainingBeepMask = navState.beepMask(navState.currentGoalIdx + 1:end);
-    remainingBeepMask = normalizePfMaskLength(remainingBeepMask, size(remainingOriginalGoals, 1), false);
-end
-replannedBeepMask = [false(max(0, size(replannedPath, 1) - 1), 1); currentGoalShouldBeep];
-goalWaypoints = [replannedPath; remainingOriginalGoals];
-newBeepMask = [replannedBeepMask; remainingBeepMask];
-[goalWaypoints, newBeepMask] = removeConsecutiveDuplicatePfGoalsWithMask(goalWaypoints, newBeepMask, 0.03);
-
-navState.goalWaypoints = goalWaypoints;
-navState.currentGoalIdx = 1;
-navState.reachedGoals = false(size(goalWaypoints, 1), 1);
-navState.beepMask = normalizePfMaskLength(newBeepMask, size(goalWaypoints, 1), false);
-navState.finalDistanceToGoal = NaN;
-navState.lastRecoveryPlanInfo = plannerInfo;
-navState.lastRecoveryBumpObstacle = bumpObstacle;
 
 recoveryOk = true;
-dataStore = appendPfRecoveryLog(dataStore, tNow, navState.bumpRecoveryCount, bump, backedDistance, turnedAngle, recoveryOk);
-end
-
-function [planningMap, bumpObstacle] = addPfBumpObstacleToPlanningMap(map, mu, bump, params)
-planningMap = map;
-bumpObstacle = [NaN NaN NaN NaN];
-if ~params.recoveryAddBumpObstacle || params.recoveryBumpObstacleLength <= 0
-    return;
-end
-
-normal = pfBumpContactDirection(mu, bump);
-tangent = [-normal(2), normal(1)];
-center = mu(1:2).' + params.recoveryBumpObstacleForwardOffset * normal;
-halfLen = 0.5 * params.recoveryBumpObstacleLength;
-bumpObstacle = [center - halfLen * tangent, center + halfLen * tangent];
-planningMap = [map; bumpObstacle];
-end
-
-function normal = pfBumpContactDirection(mu, bump)
-offset = 0;
-if getPfBumpField(bump, 'left') && ~getPfBumpField(bump, 'front')
-    offset = deg2rad(35);
-elseif getPfBumpField(bump, 'right') && ~getPfBumpField(bump, 'front')
-    offset = deg2rad(-35);
-end
-theta = mu(3) + offset;
-normal = [cos(theta), sin(theta)];
+dataStore = appendPfRecoveryLog(dataStore, tNow, navState.bumpRecoveryCount, bump, backedDistance, 0, recoveryOk);
 end
 
 function [particles, weights, backedDistance] = executePfRecoveryBackUp(Robot, particles, weights, params)
@@ -569,34 +492,6 @@ end
 stopRobotSafe(Robot);
 end
 
-function [particles, weights, turnedAngle] = executePfRecoveryTurn(Robot, particles, weights, turnDir, params)
-turnedAngle = 0;
-timerObj = tic;
-targetTurn = abs(params.recoveryTurnAngle);
-while abs(turnedAngle) < targetTurn && toc(timerObj) < params.recoveryMaxTurnTime
-    SetFwdVelAngVelCreate(Robot, 0, turnDir * abs(params.recoveryTurnVel));
-    pause(params.recoveryControlDt);
-    odom = readPfRecoveryOdom(Robot);
-    if odom.valid
-        particles = propagateParticles(particles, odom, params);
-        turnedAngle = turnedAngle + odom.phi;
-    else
-        turnedAngle = turnedAngle + turnDir * abs(params.recoveryTurnVel) * params.recoveryControlDt;
-    end
-end
-stopRobotSafe(Robot);
-end
-
-function turnDir = choosePfRecoveryTurnDirection(bump)
-if isfield(bump, 'right') && bump.right && ~(isfield(bump, 'left') && bump.left)
-    turnDir = 1;
-elseif isfield(bump, 'left') && bump.left && ~(isfield(bump, 'right') && bump.right)
-    turnDir = -1;
-else
-    turnDir = 1;
-end
-end
-
 function odom = readPfRecoveryOdom(Robot)
 odom = struct('d', 0, 'phi', 0, 'valid', false);
 try
@@ -607,57 +502,6 @@ try
     if ~isfinite(odom.phi), odom.phi = 0; end
     odom.valid = true;
 catch
-end
-end
-
-function [escapePath, escapeInfo] = planPfRecoveryEscapePath(mu, currentGoal, map, plannerParams, params)
-robotXY = mu(1:2).';
-currentGoal = currentGoal(:).';
-escapePath = zeros(0, 2);
-escapeInfo = struct('success', false, 'reason', 'noEscapeCandidate', ...
-    'escapePoint', [NaN NaN], 'escapeClearance', NaN);
-
-[~, closestPoint] = nearestPfWallPoint(robotXY, map);
-baseDir = robotXY - closestPoint;
-if norm(baseDir) < 1e-6
-    baseDir = [cos(mu(3)), sin(mu(3))];
-end
-baseDir = baseDir / norm(baseDir);
-
-bounds = inferPfMapBounds(map);
-bestScore = inf;
-for dist = params.recoveryEscapeDistances(:).'
-    for angleOffset = params.recoveryEscapeAngleOffsets(:).'
-        dir = rotatePfVector2d(baseDir, angleOffset);
-        candidate = robotXY + dist * dir;
-        if ~pointInsidePfBounds(candidate, bounds, params.recoveryEscapeBoundsMargin)
-            continue;
-        end
-        if segmentIntersectsAnyPfWall(robotXY, candidate, map)
-            continue;
-        end
-        clearance = pointPfWallClearance(candidate, map);
-        if clearance < params.recoveryEscapeMinWallClearance
-            continue;
-        end
-        [pathFromEscape, pathInfo] = planPathKnownMap(candidate, currentGoal, map, plannerParams);
-        if isempty(pathFromEscape) || ~pathInfo.success
-            continue;
-        end
-        candidatePath = [candidate; pathFromEscape(2:end, :)];
-        candidatePath = removeConsecutivePfGoals(candidatePath, 0.03);
-        score = pathLengthPf(candidatePath) - 0.25 * clearance;
-        if score < bestScore
-            bestScore = score;
-            escapePath = candidatePath;
-            escapeInfo.success = true;
-            escapeInfo.reason = 'escapeThenPlan';
-            escapeInfo.escapePoint = candidate;
-            escapeInfo.escapeClearance = clearance;
-            escapeInfo.plannerInfo = pathInfo;
-            escapeInfo.score = score;
-        end
-    end
 end
 end
 
@@ -819,34 +663,6 @@ dataStore.pfRecovery = [dataStore.pfRecovery; ...
     getPfBumpField(bump, 'front') backedDistance turnedAngle double(success)];
 end
 
-function dataStore = appendPfRecoveryObstacleLog(dataStore, tNow, recoveryIdx, bumpObstacle)
-if ~isfield(dataStore, 'pfRecoveryObstacle') || isempty(dataStore.pfRecoveryObstacle)
-    dataStore.pfRecoveryObstacle = [];
-end
-
-if isempty(bumpObstacle) || numel(bumpObstacle) ~= 4
-    bumpObstacle = [NaN NaN NaN NaN];
-end
-dataStore.pfRecoveryObstacle = [dataStore.pfRecoveryObstacle; ...
-    tNow recoveryIdx bumpObstacle(:).'];
-end
-
-function dataStore = appendPfRecoveryEscapeLog(dataStore, tNow, recoveryIdx, escapeInfo)
-if ~isfield(dataStore, 'pfRecoveryEscape') || isempty(dataStore.pfRecoveryEscape)
-    dataStore.pfRecoveryEscape = [];
-end
-escapePoint = [NaN NaN];
-escapeClearance = NaN;
-success = false;
-if isstruct(escapeInfo)
-    if isfield(escapeInfo, 'escapePoint'), escapePoint = escapeInfo.escapePoint; end
-    if isfield(escapeInfo, 'escapeClearance'), escapeClearance = escapeInfo.escapeClearance; end
-    if isfield(escapeInfo, 'success'), success = escapeInfo.success; end
-end
-dataStore.pfRecoveryEscape = [dataStore.pfRecoveryEscape; ...
-    tNow recoveryIdx escapePoint(1) escapePoint(2) escapeClearance double(success)];
-end
-
 function value = getPfBumpField(bump, fieldName)
 if isstruct(bump) && isfield(bump, fieldName)
     value = double(bump.(fieldName));
@@ -904,133 +720,4 @@ for i = 1:numRows
 end
 validRows = arrayfun(@(b) isfinite(b.tagNum) && isfinite(b.xCam) && isfinite(b.yCam), beacons);
 beacons = beacons(validRows);
-end
-
-function [dMin, closestPoint] = nearestPfWallPoint(p, map)
-dMin = inf;
-closestPoint = p;
-for i = 1:size(map, 1)
-    [d, proj] = pointPfSegmentDistance(p, map(i, 1:2), map(i, 3:4));
-    if d < dMin
-        dMin = d;
-        closestPoint = proj;
-    end
-end
-end
-
-function dMin = pointPfWallClearance(p, map)
-dMin = inf;
-for i = 1:size(map, 1)
-    d = pointPfSegmentDistance(p, map(i, 1:2), map(i, 3:4));
-    dMin = min(dMin, d);
-end
-end
-
-function [d, proj] = pointPfSegmentDistance(p, a, b)
-ab = b - a;
-den = dot(ab, ab);
-if den < eps
-    proj = a;
-    d = norm(p - a);
-    return;
-end
-t = dot(p - a, ab) / den;
-t = max(0, min(1, t));
-proj = a + t * ab;
-d = norm(p - proj);
-end
-
-function bounds = inferPfMapBounds(map)
-xs = [map(:, 1); map(:, 3)];
-ys = [map(:, 2); map(:, 4)];
-bounds = [min(xs), max(xs), min(ys), max(ys)];
-end
-
-function tf = pointInsidePfBounds(p, bounds, margin)
-tf = p(1) >= bounds(1) + margin && ...
-     p(1) <= bounds(2) - margin && ...
-     p(2) >= bounds(3) + margin && ...
-     p(2) <= bounds(4) - margin;
-end
-
-function vRot = rotatePfVector2d(v, angleRad)
-c = cos(angleRad);
-s = sin(angleRad);
-vRot = [c * v(1) - s * v(2), s * v(1) + c * v(2)];
-end
-
-function tf = segmentIntersectsAnyPfWall(p1, p2, map)
-tf = false;
-for i = 1:size(map, 1)
-    if segmentsPfIntersect(p1, p2, map(i, 1:2), map(i, 3:4))
-        tf = true;
-        return;
-    end
-end
-end
-
-function tf = segmentsPfIntersect(a, b, c, d)
-tol = 1e-9;
-o1 = orientationPf(a, b, c);
-o2 = orientationPf(a, b, d);
-o3 = orientationPf(c, d, a);
-o4 = orientationPf(c, d, b);
-tf = false;
-if o1 * o2 < -tol && o3 * o4 < -tol
-    tf = true;
-    return;
-end
-if abs(o1) <= tol && onPfSegment(a, c, b), tf = true; return; end
-if abs(o2) <= tol && onPfSegment(a, d, b), tf = true; return; end
-if abs(o3) <= tol && onPfSegment(c, a, d), tf = true; return; end
-if abs(o4) <= tol && onPfSegment(c, b, d), tf = true; return; end
-end
-
-function val = orientationPf(a, b, c)
-val = (b(1) - a(1)) * (c(2) - a(2)) - (b(2) - a(2)) * (c(1) - a(1));
-end
-
-function tf = onPfSegment(a, b, c)
-tol = 1e-9;
-tf = b(1) >= min(a(1), c(1)) - tol && b(1) <= max(a(1), c(1)) + tol && ...
-     b(2) >= min(a(2), c(2)) - tol && b(2) <= max(a(2), c(2)) + tol;
-end
-
-function goals = removeConsecutivePfGoals(goals, tol)
-if isempty(goals)
-    return;
-end
-keep = true(size(goals, 1), 1);
-for i = 2:size(goals, 1)
-    if norm(goals(i, :) - goals(i - 1, :)) < tol
-        keep(i) = false;
-    end
-end
-goals = goals(keep, :);
-end
-
-function [goals, mask] = removeConsecutiveDuplicatePfGoalsWithMask(goals, mask, tol)
-if isempty(goals)
-    mask = false(0, 1);
-    return;
-end
-mask = normalizePfMaskLength(mask, size(goals, 1), false);
-keep = true(size(goals, 1), 1);
-for i = 2:size(goals, 1)
-    if norm(goals(i, :) - goals(i - 1, :)) < tol
-        keep(i) = false;
-        mask(i - 1) = mask(i - 1) || mask(i);
-    end
-end
-goals = goals(keep, :);
-mask = mask(keep);
-end
-
-function len = pathLengthPf(path)
-if size(path, 1) < 2
-    len = 0;
-    return;
-end
-diffs = diff(path, 1, 1);
-len = sum(sqrt(sum(diffs .^ 2, 2)));
 end
