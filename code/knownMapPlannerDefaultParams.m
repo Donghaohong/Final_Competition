@@ -4,7 +4,7 @@ function params = knownMapPlannerDefaultParams(override)
 params = struct();
 
 % Clearance for the robot center relative to all known wall segments.
-params.robotRadius = 0.18;
+params.robotRadius = 0.2;
 params.wallClearance = 0.17;
 params.edgeClearance = params.robotRadius + params.wallClearance;
 params.nodeClearance = params.edgeClearance;
