@@ -21,6 +21,9 @@ params.duplicateNodeTol = 0.05;
 params.intersectionTol = 1e-9;
 params.clearanceTol = 1e-6;
 params.smoothPath = true;
+params.wallProximityCostDistance = 0.70;
+params.wallProximityCostWeight = 2.0;
+params.smoothMaxCostRatio = 1.03;
 params.maxSegmentLength = 0.30;
 
 % Workspace boundary inferred from the outer wall extents.
