@@ -21,7 +21,7 @@ params.duplicateNodeTol = 0.05;
 params.intersectionTol = 1e-9;
 params.clearanceTol = 1e-6;
 params.smoothPath = true;
-params.maxSegmentLength = 0.18;
+params.maxSegmentLength = 0.30;
 
 % Workspace boundary inferred from the outer wall extents.
 params.boundsPadding = 0.0;
