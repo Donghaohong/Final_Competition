@@ -163,7 +163,7 @@ end
 function dataStore = ensureEkfDataStoreFields(dataStore)
 numericFields = {'truthPose', 'odometry', 'rsdepth', 'bump', 'beacon', ...
                  'ekfMu', 'ekfCommand', 'ekfGoal', 'ekfUpdateStats', ...
-                 'ekfRecovery', 'ekfRecoveryEscape'};
+                 'ekfRecovery', 'ekfRecoveryEscape', 'ekfRecoveryObstacle'};
 for i = 1:numel(numericFields)
     name = numericFields{i};
     if ~isfield(dataStore, name) || isempty(dataStore.(name))
@@ -727,10 +727,13 @@ recoveryOk = false;
 stopRobotSafe(Robot);
 pause(0.05);
 
+preRecoveryMu = mu;
+[recoveryMap, bumpObstacle] = addBumpObstacleToPlanningMap(map, preRecoveryMu, bump, params);
 [mu, sigma, backedDistance] = executeRecoveryBackUp(Robot, mu, sigma, params);
 turnDir = chooseRecoveryTurnDirection(bump);
 [mu, sigma, turnedAngle] = executeRecoveryTurn(Robot, mu, sigma, turnDir, params);
 stopRobotSafe(Robot);
+dataStore = appendRecoveryObstacleLog(dataStore, tNow, navState.bumpRecoveryCount, bumpObstacle);
 
 if navState.currentGoalIdx > size(goalWaypoints, 1)
     recoveryOk = true;
@@ -740,10 +743,10 @@ end
 
 currentGoal = goalWaypoints(navState.currentGoalIdx, :);
 plannerParams = knownMapPlannerDefaultParams();
-[replannedPath, plannerInfo] = planPathKnownMap(mu(1:2).', currentGoal, map, plannerParams);
+[replannedPath, plannerInfo] = planPathKnownMap(mu(1:2).', currentGoal, recoveryMap, plannerParams);
 
 if isempty(replannedPath) || ~plannerInfo.success
-    [replannedPath, escapeInfo] = planRecoveryEscapePath(mu, currentGoal, map, plannerParams, params);
+    [replannedPath, escapeInfo] = planRecoveryEscapePath(mu, currentGoal, recoveryMap, plannerParams, params);
     dataStore = appendRecoveryEscapeLog(dataStore, tNow, navState.bumpRecoveryCount, escapeInfo);
     if isempty(replannedPath) || ~escapeInfo.success
         dataStore = appendRecoveryLog(dataStore, tNow, navState.bumpRecoveryCount, bump, backedDistance, turnedAngle, false);
@@ -751,6 +754,8 @@ if isempty(replannedPath) || ~plannerInfo.success
     end
     plannerInfo = escapeInfo;
 end
+plannerInfo.recoveryBumpObstacle = bumpObstacle;
+plannerInfo.recoveryPlanningMapSize = size(recoveryMap, 1);
 
 remainingOriginalGoals = goalWaypoints(navState.currentGoalIdx + 1:end, :);
 currentGoalShouldBeep = false;
@@ -773,9 +778,36 @@ navState.reachedGoals = false(size(goalWaypoints, 1), 1);
 navState.beepMask = normalizeMaskLength(newBeepMask, size(goalWaypoints, 1), false);
 navState.finalDistanceToGoal = NaN;
 navState.lastRecoveryPlanInfo = plannerInfo;
+navState.lastRecoveryBumpObstacle = bumpObstacle;
 
 recoveryOk = true;
 dataStore = appendRecoveryLog(dataStore, tNow, navState.bumpRecoveryCount, bump, backedDistance, turnedAngle, recoveryOk);
+end
+
+function [planningMap, bumpObstacle] = addBumpObstacleToPlanningMap(map, mu, bump, params)
+planningMap = map;
+bumpObstacle = [NaN NaN NaN NaN];
+if ~params.recoveryAddBumpObstacle || params.recoveryBumpObstacleLength <= 0
+    return;
+end
+
+normal = bumpContactDirection(mu, bump);
+tangent = [-normal(2), normal(1)];
+center = mu(1:2).' + params.recoveryBumpObstacleForwardOffset * normal;
+halfLen = 0.5 * params.recoveryBumpObstacleLength;
+bumpObstacle = [center - halfLen * tangent, center + halfLen * tangent];
+planningMap = [map; bumpObstacle];
+end
+
+function normal = bumpContactDirection(mu, bump)
+offset = 0;
+if getBumpField(bump, 'left') && ~getBumpField(bump, 'front')
+    offset = deg2rad(35);
+elseif getBumpField(bump, 'right') && ~getBumpField(bump, 'front')
+    offset = deg2rad(-35);
+end
+theta = mu(3) + offset;
+normal = [cos(theta), sin(theta)];
 end
 
 function [escapePath, escapeInfo] = planRecoveryEscapePath(mu, currentGoal, map, plannerParams, params)
@@ -959,6 +991,18 @@ bumpLeft = getBumpField(bump, 'left');
 bumpFront = getBumpField(bump, 'front');
 dataStore.ekfRecovery = [dataStore.ekfRecovery; ...
     tNow recoveryIdx bumpRight bumpLeft bumpFront backedDistance turnedAngle double(success)];
+end
+
+function dataStore = appendRecoveryObstacleLog(dataStore, tNow, recoveryIdx, bumpObstacle)
+if ~isfield(dataStore, 'ekfRecoveryObstacle') || isempty(dataStore.ekfRecoveryObstacle)
+    dataStore.ekfRecoveryObstacle = [];
+end
+
+if isempty(bumpObstacle) || numel(bumpObstacle) ~= 4
+    bumpObstacle = [NaN NaN NaN NaN];
+end
+dataStore.ekfRecoveryObstacle = [dataStore.ekfRecoveryObstacle; ...
+    tNow recoveryIdx bumpObstacle(:).'];
 end
 
 function dataStore = appendRecoveryEscapeLog(dataStore, tNow, recoveryIdx, escapeInfo)

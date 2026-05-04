@@ -51,7 +51,8 @@ if pointWallClearance(goalXY, map) < params.startGoalClearance
     return;
 end
 
-if edgeIsCollisionFree(startXY, goalXY, map, bounds, params)
+[directIsFree, directClearance] = edgeIsCollisionFree(startXY, goalXY, map, bounds, params);
+if directIsFree && directClearance >= params.wallProximityCostDistance - params.clearanceTol
     rawPath = [startXY; goalXY];
     path = densifyPath(rawPath, params.maxSegmentLength);
     pathInfo.success = true;
@@ -60,7 +61,8 @@ if edgeIsCollisionFree(startXY, goalXY, map, bounds, params)
     pathInfo.edges = [1 2];
     pathInfo.rawPath = rawPath;
     pathInfo.path = path;
-    pathInfo.pathCost = pathLength(path);
+    pathInfo.pathCost = pathTraversalCost(path, map, params);
+    pathInfo.geometricLength = pathLength(path);
     return;
 end
 
@@ -79,8 +81,9 @@ edges = zeros(0, 2);
 
 for i = 1:n-1
     for j = i+1:n
-        if edgeIsCollisionFree(nodes(i, :), nodes(j, :), map, bounds, params)
-            w = norm(nodes(i, :) - nodes(j, :));
+        [isFree, edgeClearance] = edgeIsCollisionFree(nodes(i, :), nodes(j, :), map, bounds, params);
+        if isFree
+            w = edgeTraversalCost(nodes(i, :), nodes(j, :), edgeClearance, params);
             adj(i, j) = w;
             adj(j, i) = w;
             edges(end+1, :) = [i j]; %#ok<AGROW>
@@ -112,7 +115,8 @@ pathInfo.success = true;
 pathInfo.reason = 'graphPath';
 pathInfo.rawPath = rawPath;
 pathInfo.path = path;
-pathInfo.pathCost = pathLength(path);
+pathInfo.pathCost = pathTraversalCost(path, map, params);
+pathInfo.geometricLength = pathLength(path);
 end
 
 function nodes = generateRoadmapNodes(map, bounds, params)
@@ -179,17 +183,20 @@ for i = 1:size(map, 1)
 end
 end
 
-function tf = edgeIsCollisionFree(p1, p2, map, bounds, params)
+function [tf, minClearance] = edgeIsCollisionFree(p1, p2, map, bounds, params)
 tf = false;
+minClearance = -inf;
 if ~pointInsideBounds(p1, bounds, params.startGoalClearance) || ...
    ~pointInsideBounds(p2, bounds, params.startGoalClearance)
     return;
 end
 
+minClearance = inf;
 for i = 1:size(map, 1)
     wallA = map(i, 1:2);
     wallB = map(i, 3:4);
     d = segmentSegmentDistance(p1, p2, wallA, wallB);
+    minClearance = min(minClearance, d);
     if d < params.edgeClearance - params.clearanceTol
         return;
     end
@@ -335,7 +342,13 @@ i = 1;
 while i < size(rawPath, 1)
     bestJ = i + 1;
     for j = size(rawPath, 1):-1:(i + 1)
-        if edgeIsCollisionFree(rawPath(i, :), rawPath(j, :), map, bounds, params)
+        [isFree, edgeClearance] = edgeIsCollisionFree(rawPath(i, :), rawPath(j, :), map, bounds, params);
+        if isFree
+            directCost = edgeTraversalCost(rawPath(i, :), rawPath(j, :), edgeClearance, params);
+            subPathCost = pathTraversalCost(rawPath(i:j, :), map, params);
+            if directCost > subPathCost * params.smoothMaxCostRatio
+                continue;
+            end
             bestJ = j;
             break;
         end
@@ -343,6 +356,40 @@ while i < size(rawPath, 1)
     path(end+1, :) = rawPath(bestJ, :); %#ok<AGROW>
     i = bestJ;
 end
+end
+
+function totalCost = pathTraversalCost(path, map, params)
+if size(path, 1) < 2
+    totalCost = 0;
+    return;
+end
+
+totalCost = 0;
+for i = 1:(size(path, 1) - 1)
+    minClearance = segmentWallClearance(path(i, :), path(i + 1, :), map);
+    totalCost = totalCost + edgeTraversalCost(path(i, :), path(i + 1, :), minClearance, params);
+end
+end
+
+function minClearance = segmentWallClearance(p1, p2, map)
+minClearance = inf;
+for i = 1:size(map, 1)
+    minClearance = min(minClearance, ...
+        segmentSegmentDistance(p1, p2, map(i, 1:2), map(i, 3:4)));
+end
+end
+
+function cost = edgeTraversalCost(p1, p2, minClearance, params)
+segLen = norm(p2 - p1);
+if segLen <= 0
+    cost = 0;
+    return;
+end
+
+avoidDistance = max(params.wallProximityCostDistance, params.edgeClearance);
+avoidBand = max(avoidDistance - params.edgeClearance, eps);
+proximity = max(0, avoidDistance - minClearance) / avoidBand;
+cost = segLen * (1 + params.wallProximityCostWeight * proximity ^ 2);
 end
 
 function densePath = densifyPath(path, maxSegmentLength)

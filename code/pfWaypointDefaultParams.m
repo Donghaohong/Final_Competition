@@ -88,6 +88,9 @@ params.recoveryEscapeDistances = ekf.recoveryEscapeDistances;
 params.recoveryEscapeAngleOffsets = ekf.recoveryEscapeAngleOffsets;
 params.recoveryEscapeMinWallClearance = ekf.recoveryEscapeMinWallClearance;
 params.recoveryEscapeBoundsMargin = ekf.recoveryEscapeBoundsMargin;
+params.recoveryAddBumpObstacle = ekf.recoveryAddBumpObstacle;
+params.recoveryBumpObstacleForwardOffset = ekf.recoveryBumpObstacleForwardOffset;
+params.recoveryBumpObstacleLength = ekf.recoveryBumpObstacleLength;
 
 % Runtime-filled fields.
 params.cameraOffset = [0 0];

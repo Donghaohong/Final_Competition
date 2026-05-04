@@ -160,7 +160,7 @@ end
 function dataStore = ensurePfDataStoreFields(dataStore)
 numericFields = {'truthPose', 'odometry', 'rsdepth', 'bump', 'beacon', ...
                  'pfMu', 'pfCommand', 'pfGoal', 'pfUpdateStats', ...
-                 'pfRecovery', 'pfRecoveryEscape'};
+                 'pfRecovery', 'pfRecoveryEscape', 'pfRecoveryObstacle'};
 for i = 1:numel(numericFields)
     name = numericFields{i};
     if ~isfield(dataStore, name) || isempty(dataStore.(name))
@@ -468,11 +468,14 @@ recoveryOk = false;
 stopRobotSafe(Robot);
 pause(0.05);
 
+preRecoveryMu = estimatePfPoseAndCov(particles, weights, params);
+[recoveryMap, bumpObstacle] = addPfBumpObstacleToPlanningMap(map, preRecoveryMu, bump, params);
 [particles, weights, backedDistance] = executePfRecoveryBackUp(Robot, particles, weights, params);
 turnDir = choosePfRecoveryTurnDirection(bump);
 [particles, weights, turnedAngle] = executePfRecoveryTurn(Robot, particles, weights, turnDir, params);
 stopRobotSafe(Robot);
 [mu, sigma] = estimatePfPoseAndCov(particles, weights, params);
+dataStore = appendPfRecoveryObstacleLog(dataStore, tNow, navState.bumpRecoveryCount, bumpObstacle);
 
 if navState.currentGoalIdx > size(goalWaypoints, 1)
     recoveryOk = true;
@@ -482,10 +485,10 @@ end
 
 currentGoal = goalWaypoints(navState.currentGoalIdx, :);
 plannerParams = knownMapPlannerDefaultParams();
-[replannedPath, plannerInfo] = planPathKnownMap(mu(1:2).', currentGoal, map, plannerParams);
+[replannedPath, plannerInfo] = planPathKnownMap(mu(1:2).', currentGoal, recoveryMap, plannerParams);
 
 if isempty(replannedPath) || ~plannerInfo.success
-    [replannedPath, escapeInfo] = planPfRecoveryEscapePath(mu, currentGoal, map, plannerParams, params);
+    [replannedPath, escapeInfo] = planPfRecoveryEscapePath(mu, currentGoal, recoveryMap, plannerParams, params);
     dataStore = appendPfRecoveryEscapeLog(dataStore, tNow, navState.bumpRecoveryCount, escapeInfo);
     if isempty(replannedPath) || ~escapeInfo.success
         dataStore = appendPfRecoveryLog(dataStore, tNow, navState.bumpRecoveryCount, bump, backedDistance, turnedAngle, false);
@@ -493,6 +496,8 @@ if isempty(replannedPath) || ~plannerInfo.success
     end
     plannerInfo = escapeInfo;
 end
+plannerInfo.recoveryBumpObstacle = bumpObstacle;
+plannerInfo.recoveryPlanningMapSize = size(recoveryMap, 1);
 
 remainingOriginalGoals = goalWaypoints(navState.currentGoalIdx + 1:end, :);
 currentGoalShouldBeep = false;
@@ -515,9 +520,36 @@ navState.reachedGoals = false(size(goalWaypoints, 1), 1);
 navState.beepMask = normalizePfMaskLength(newBeepMask, size(goalWaypoints, 1), false);
 navState.finalDistanceToGoal = NaN;
 navState.lastRecoveryPlanInfo = plannerInfo;
+navState.lastRecoveryBumpObstacle = bumpObstacle;
 
 recoveryOk = true;
 dataStore = appendPfRecoveryLog(dataStore, tNow, navState.bumpRecoveryCount, bump, backedDistance, turnedAngle, recoveryOk);
+end
+
+function [planningMap, bumpObstacle] = addPfBumpObstacleToPlanningMap(map, mu, bump, params)
+planningMap = map;
+bumpObstacle = [NaN NaN NaN NaN];
+if ~params.recoveryAddBumpObstacle || params.recoveryBumpObstacleLength <= 0
+    return;
+end
+
+normal = pfBumpContactDirection(mu, bump);
+tangent = [-normal(2), normal(1)];
+center = mu(1:2).' + params.recoveryBumpObstacleForwardOffset * normal;
+halfLen = 0.5 * params.recoveryBumpObstacleLength;
+bumpObstacle = [center - halfLen * tangent, center + halfLen * tangent];
+planningMap = [map; bumpObstacle];
+end
+
+function normal = pfBumpContactDirection(mu, bump)
+offset = 0;
+if getPfBumpField(bump, 'left') && ~getPfBumpField(bump, 'front')
+    offset = deg2rad(35);
+elseif getPfBumpField(bump, 'right') && ~getPfBumpField(bump, 'front')
+    offset = deg2rad(-35);
+end
+theta = mu(3) + offset;
+normal = [cos(theta), sin(theta)];
 end
 
 function [particles, weights, backedDistance] = executePfRecoveryBackUp(Robot, particles, weights, params)
@@ -785,6 +817,18 @@ end
 dataStore.pfRecovery = [dataStore.pfRecovery; ...
     tNow recoveryIdx getPfBumpField(bump, 'right') getPfBumpField(bump, 'left') ...
     getPfBumpField(bump, 'front') backedDistance turnedAngle double(success)];
+end
+
+function dataStore = appendPfRecoveryObstacleLog(dataStore, tNow, recoveryIdx, bumpObstacle)
+if ~isfield(dataStore, 'pfRecoveryObstacle') || isempty(dataStore.pfRecoveryObstacle)
+    dataStore.pfRecoveryObstacle = [];
+end
+
+if isempty(bumpObstacle) || numel(bumpObstacle) ~= 4
+    bumpObstacle = [NaN NaN NaN NaN];
+end
+dataStore.pfRecoveryObstacle = [dataStore.pfRecoveryObstacle; ...
+    tNow recoveryIdx bumpObstacle(:).'];
 end
 
 function dataStore = appendPfRecoveryEscapeLog(dataStore, tNow, recoveryIdx, escapeInfo)
