@@ -91,12 +91,31 @@ for i = 1:size(optWalls, 1)
         end
         continue;
     end
+    [approachOk, approachErr] = optionalWallApproachIsPrecise( ...
+        currentState.pose, observePoint, params);
+    wallStatus(i).approachError = approachErr;
+    if ~approachOk
+        wallStatus(i).status = 'unknown';
+        wallStatus(i).reason = 'approachNotPrecise';
+        if params.stopIfNavigationFails
+            break;
+        end
+        continue;
+    end
 
     wallMid = wallMidpoint(wall);
     [currentState, dataStore, turnInfo] = turnToFacePointWithEkf( ...
         Robot, currentState, wallMid, params, dataStore);
     wallStatus(i).turnInfo = turnInfo;
     wallStatus(i) = storeOptionalWallCurrentState(wallStatus(i), currentState, 'Classify', params);
+    if optionalWallTurnRequiredButNotConverged(turnInfo, params)
+        wallStatus(i).status = 'unknown';
+        wallStatus(i).reason = 'turnNotConverged';
+        if params.stopIfNavigationFails
+            break;
+        end
+        continue;
+    end
 
     depthObs = collectOptionalWallDepth(Robot, params);
     dataStore = appendOptionalWallDepthLog(dataStore, i, depthObs);
@@ -211,6 +230,13 @@ function [trackingState, dataStore, navState] = runOptionalWallFollower( ...
     Robot, map, beaconLoc, goalWaypoints, offset_x, offset_y, currentState, followerParams, verifyParams, dataStore)
 % Optional-wall observation/probe navigation points are not scoring goals.
 followerParams.beepMask = false(size(goalWaypoints, 1), 1);
+if isfield(verifyParams, 'disableFollowerBumpRecovery') && verifyParams.disableFollowerBumpRecovery
+    followerParams.stopOnBump = false;
+    followerParams.enableBumpRecovery = false;
+end
+if isfield(verifyParams, 'approachCloseEnough') && isfinite(verifyParams.approachCloseEnough)
+    followerParams.closeEnough = verifyParams.approachCloseEnough;
+end
 if strcmp(getOptionalWallFollowerMode(verifyParams), 'pf')
     [trackingState, dataStore, navState] = runPfWaypointFollower( ...
         Robot, map, beaconLoc, goalWaypoints, offset_x, offset_y, ...
@@ -286,6 +312,29 @@ else
 end
 end
 
+function [ok, err] = optionalWallApproachIsPrecise(pose, targetXY, params)
+err = inf;
+if numel(pose) >= 2 && numel(targetXY) >= 2
+    err = norm(pose(1:2) - targetXY(:));
+end
+if ~isfield(params, 'requirePreciseApproach') || ~params.requirePreciseApproach
+    ok = true;
+    return;
+end
+tol = 0.12;
+if isfield(params, 'maxApproachGoalError') && isfinite(params.maxApproachGoalError)
+    tol = params.maxApproachGoalError;
+end
+ok = isfinite(err) && err <= tol;
+end
+
+function tf = optionalWallTurnRequiredButNotConverged(turnInfo, params)
+tf = false;
+if isfield(params, 'requireTurnConvergedBeforeProbe') && params.requireTurnConvergedBeforeProbe
+    tf = ~isstruct(turnInfo) || ~isfield(turnInfo, 'converged') || ~turnInfo.converged;
+end
+end
+
 function status = emptyWallStatus()
 status = struct( ...
     'wallIdx', NaN, ...
@@ -295,6 +344,7 @@ status = struct( ...
     'reason', '', ...
     'observePoint', [], ...
     'observeInfo', struct(), ...
+    'approachError', NaN, ...
     'pathToObserve', [], ...
     'planInfo', struct(), ...
     'navState', struct(), ...
@@ -563,8 +613,11 @@ probe = struct( ...
     'expectedCenterTravel', 0, ...
     'bump', struct(), ...
     'startPose', currentState.pose, ...
+    'startPoseCov', currentState.poseCov, ...
+    'probeEndPoseBeforeBackup', currentState.pose, ...
     'endPose', currentState.pose, ...
-    'backupTravel', 0);
+    'backupTravel', 0, ...
+    'snappedToStartPose', false);
 
 mu = currentState.pose(:);
 sigma = currentState.poseCov;
@@ -605,11 +658,19 @@ end
 
 stopRobotSafe(Robot);
 probe.travel = travel;
+probe.probeEndPoseBeforeBackup = mu;
 
-if probe.bumped
-    [mu, sigma, backupTravel] = backAwayAfterOptionalWallBump(Robot, mu, sigma, params);
+backupTarget = getOptionalWallProbeBackupTarget(travel, probe.bumped, params);
+if backupTarget > 0
+    [mu, sigma, backupTravel] = backAwayAfterOptionalWallBump(Robot, mu, sigma, params, backupTarget);
     probe.backupTravel = backupTravel;
-elseif travel < maxTravel
+end
+
+[mu, sigma, snappedToStartPose] = snapOptionalWallProbePoseAfterReturn( ...
+    mu, sigma, probe.startPose, probe.startPoseCov, params);
+probe.snappedToStartPose = snappedToStartPose;
+
+if ~probe.bumped && travel < maxTravel
     probe.status = 'unknown';
     probe.reason = 'probeTimeout';
 end
@@ -639,7 +700,7 @@ if ~isfield(verifyParams, 'enableBumpProbeFallback') || ~verifyParams.enableBump
     return;
 end
 
-[probeStart, probeInfo] = chooseOptionalWallProbeStartPoint( ...
+[probeStart, probeInfo, probePlannerParams] = chooseOptionalWallProbeStartPoint( ...
     currentState.pose(1:2).', wall, currentMap, plannerParams, verifyParams);
 fallbackStatus.observePoint = probeStart;
 fallbackStatus.observeInfo = probeInfo;
@@ -650,7 +711,7 @@ if isempty(probeStart)
 end
 
 [pathToProbe, planInfo] = planPathKnownMap( ...
-    currentState.pose(1:2).', probeStart, currentMap, plannerParams);
+    currentState.pose(1:2).', probeStart, currentMap, probePlannerParams);
 fallbackStatus.pathToObserve = pathToProbe;
 fallbackStatus.planInfo = planInfo;
 if isempty(pathToProbe) || ~planInfo.success
@@ -672,12 +733,23 @@ if ~trackingState.reachedAllGoals
     fallbackStatus.reason = ['bumpFallbackNavigationFailed_' trackingState.stopReason];
     return;
 end
+[approachOk, approachErr] = optionalWallApproachIsPrecise( ...
+    currentState.pose, probeStart, verifyParams);
+fallbackStatus.approachError = approachErr;
+if ~approachOk
+    fallbackStatus.reason = 'bumpFallbackApproachNotPrecise';
+    return;
+end
 
 wallMid = wallMidpoint(wall);
 [currentState, dataStore, turnInfo] = turnToFacePointWithEkf( ...
     Robot, currentState, wallMid, verifyParams, dataStore);
 fallbackStatus.turnInfo = turnInfo;
 fallbackStatus = storeOptionalWallCurrentState(fallbackStatus, currentState, 'Classify', verifyParams);
+if optionalWallTurnRequiredButNotConverged(turnInfo, verifyParams)
+    fallbackStatus.reason = 'bumpFallbackTurnNotConverged';
+    return;
+end
 
 [currentState, dataStore, bumpProbe] = runOptionalWallBumpProbe( ...
     Robot, currentState, wall, verifyParams, dataStore, wallIdx);
@@ -704,12 +776,13 @@ switch bumpProbe.status
 end
 end
 
-function [probeStart, info] = chooseOptionalWallProbeStartPoint(startXY, wall, map, plannerParams, verifyParams)
+function [probeStart, info, probePlannerParams] = chooseOptionalWallProbeStartPoint(startXY, wall, map, plannerParams, verifyParams)
 mid = wallMidpoint(wall);
 wallVec = wall(3:4) - wall(1:2);
 wallLen = norm(wallVec);
 info = struct('reason', '', 'candidates', [], 'candidateScores', []);
 probeStart = [];
+probePlannerParams = makeProbeFallbackPlannerParams(plannerParams, verifyParams);
 
 if wallLen < eps
     info.reason = 'zeroLengthWall';
@@ -733,17 +806,18 @@ end
 candidates = uniqueRowsToleranceLocal(candidates, 1e-6);
 info.candidates = candidates;
 info.candidateScores = inf(size(candidates, 1), 1);
+info.probePlannerParams = probePlannerParams;
 
 bestScore = inf;
 bestPoint = [];
 bestPlanInfo = struct();
 for i = 1:size(candidates, 1)
     p = candidates(i, :);
-    if ~probeStartPointIsValid(p, map, verifyParams)
+    if ~probeStartPointIsValid(p, map, verifyParams, probePlannerParams)
         continue;
     end
 
-    [path, planInfo] = planPathKnownMap(startXY, p, map, plannerParams);
+    [path, planInfo] = planPathKnownMap(startXY, p, map, probePlannerParams);
     if isempty(path) || ~planInfo.success
         continue;
     end
@@ -769,10 +843,24 @@ info.bestScore = bestScore;
 info.bestPlanInfo = bestPlanInfo;
 end
 
-function tf = probeStartPointIsValid(p, map, verifyParams)
+function plannerParams = makeProbeFallbackPlannerParams(plannerParamsIn, verifyParams)
+if isfield(verifyParams, 'bumpFallbackUseWaypointPlanner') && verifyParams.bumpFallbackUseWaypointPlanner
+    plannerParams = knownMapPlannerDefaultParams();
+    if isfield(plannerParamsIn, 'maxSegmentLength')
+        plannerParams.maxSegmentLength = plannerParamsIn.maxSegmentLength;
+    end
+else
+    plannerParams = plannerParamsIn;
+end
+end
+
+function tf = probeStartPointIsValid(p, map, verifyParams, plannerParams)
 tf = false;
 bounds = inferBoundsLocal(map);
 clearance = verifyParams.bumpFallbackClearance;
+if isfield(verifyParams, 'bumpFallbackUseWaypointPlanner') && verifyParams.bumpFallbackUseWaypointPlanner
+    clearance = max(plannerParams.startGoalClearance, 0.05);
+end
 if p(1) < bounds(1) + clearance || p(1) > bounds(2) - clearance || ...
    p(2) < bounds(3) + clearance || p(2) > bounds(4) - clearance
     return;
@@ -791,9 +879,59 @@ for i = 1:numel(fn)
 end
 end
 
-function [mu, sigma, backupTravel] = backAwayAfterOptionalWallBump(Robot, mu, sigma, params)
+function backupTarget = getOptionalWallProbeBackupTarget(travel, bumped, params)
+if isfield(params, 'bumpProbeReturnToStart') && params.bumpProbeReturnToStart
+    extraDistance = 0;
+    if isfield(params, 'bumpProbeReturnExtraDistance') && isfinite(params.bumpProbeReturnExtraDistance)
+        extraDistance = max(0, params.bumpProbeReturnExtraDistance);
+    end
+    if bumped && isfield(params, 'bumpProbeHitExtraBackupDistance') && ...
+            isfinite(params.bumpProbeHitExtraBackupDistance)
+        extraDistance = extraDistance + max(0, params.bumpProbeHitExtraBackupDistance);
+    end
+    backupTarget = max(0, travel + extraDistance);
+else
+    backupTarget = 0;
+end
+end
+
+function [mu, sigma, snapped] = snapOptionalWallProbePoseAfterReturn( ...
+    mu, sigma, startPose, startSigma, params)
+snapped = false;
+if ~isfield(params, 'bumpProbeReturnToStart') || ~params.bumpProbeReturnToStart || ...
+        ~isfield(params, 'bumpProbeSnapPoseToStart') || ~params.bumpProbeSnapPoseToStart
+    return;
+end
+if numel(startPose) ~= 3
+    return;
+end
+
+mu = startPose(:);
+if isequal(size(startSigma), [3 3]) && all(isfinite(startSigma(:)))
+    sigma = startSigma;
+elseif ~isequal(size(sigma), [3 3]) || any(~isfinite(sigma(:)))
+    sigma = diag([0.08 0.08 deg2rad(12)] .^ 2);
+end
+
+stdXY = 0.04;
+stdTheta = deg2rad(6);
+if isfield(params, 'bumpProbeSnapPoseStdXY') && isfinite(params.bumpProbeSnapPoseStdXY)
+    stdXY = params.bumpProbeSnapPoseStdXY;
+end
+if isfield(params, 'bumpProbeSnapPoseStdTheta') && isfinite(params.bumpProbeSnapPoseStdTheta)
+    stdTheta = params.bumpProbeSnapPoseStdTheta;
+end
+sigma = sigma + diag([stdXY stdXY stdTheta] .^ 2);
+sigma = (sigma + sigma.') / 2;
+snapped = true;
+end
+
+function [mu, sigma, backupTravel] = backAwayAfterOptionalWallBump(Robot, mu, sigma, params, backupTarget)
+if nargin < 5 || isempty(backupTarget)
+    backupTarget = 0;
+end
 backupTravel = 0;
-while backupTravel < params.bumpProbeBackupDistance
+while backupTravel < backupTarget
     SetFwdVelAngVelCreate(Robot, params.bumpProbeBackupSpeed, 0);
     pause(params.bumpProbeControlDt);
     odom = readTurnOdom(Robot);
@@ -837,9 +975,17 @@ end
 classification.bumpProbe = bumpProbe;
 switch bumpProbe.status
     case 'exists'
-        classification.status = 'exists';
-        classification.confidence = 1;
-        classification.reason = 'bumpProbeContact';
+        if strcmp(classification.status, 'absent') && ...
+                isfield(classification, 'errAbsent') && isfield(classification, 'errPresent') && ...
+                classification.errAbsent + 0.10 < classification.errPresent
+            classification.status = 'absent';
+            classification.confidence = max(classification.confidence, 0.75);
+            classification.reason = 'depthAbsentBumpConflict';
+        else
+            classification.status = 'exists';
+            classification.confidence = 1;
+            classification.reason = 'bumpProbeContact';
+        end
     case 'absent'
         classification.status = 'absent';
         classification.confidence = 1;

@@ -55,6 +55,7 @@ try
 
     normalGoals = defaultCompetitionGoals(S.waypoints, initState.startWaypointIdx);
     ecGoals = getFieldOrDefault(S, 'ECwaypoints', zeros(0, 2));
+    ecGoalVisitOrder = [];
 
     plannerParams = knownMapPlannerDefaultParams();
     ekfParams = ekfWaypointDefaultParams();
@@ -73,6 +74,9 @@ try
     postWallEscapeParams.controlDt = 0.10;
 
     currentState = initState;
+    [normalGoals, normalGoalVisitOrder] = orderNearestPoints( ...
+        currentState.pose(1:2).', normalGoals);
+    normalPlanningMap = [S.map; S.optWalls];
     normalEkfState = struct();
     normalNavState = struct();
     normalPlannedPath = [];
@@ -81,7 +85,7 @@ try
 
     if ~isempty(normalGoals) && remainingTime(maxTime, runTimer) > 5.0
         [normalPlannedPath, normalPlannerInfo] = planWaypointSequenceKnownMap( ...
-            currentState.pose(1:2).', normalGoals, S.map, plannerParams);
+            currentState.pose(1:2).', normalGoals, normalPlanningMap, plannerParams);
         if isempty(normalPlannedPath) || ~normalPlannerInfo.success
             dataStore.final.stopReason = ['normalPlanFailed_' normalPlannerInfo.reason];
         else
@@ -96,6 +100,14 @@ try
             currentState = updateStateFromEkf(currentState, normalEkfState);
             [currentState, normalSnapInfo] = snapPlanningStateToLastReachedGoal( ...
                 currentState, normalNavState, normalPlannedPath, normalFollowerParams.beepMask);
+            dataStore.normalGoals = normalGoals;
+            dataStore.normalGoalVisitOrder = normalGoalVisitOrder;
+            dataStore.normalPlanningMap = normalPlanningMap;
+            dataStore.normalPlannedPath = normalPlannedPath;
+            dataStore.normalPlannerInfo = normalPlannerInfo;
+            dataStore.normalSnapInfo = normalSnapInfo;
+            dataStore.normalEkfState = normalEkfState;
+            dataStore.normalNavState = normalNavState;
             dataStore = syncFinalGlobal(dataStore, 'normalWaypointsDone');
         end
     end
@@ -113,13 +125,54 @@ try
     ekfVerifyParams = ekfParams;
     ekfVerifyParams.beepMask = [];
     wallStatus = repmat(emptyFinalWallStatus(), size(S.optWalls, 1), 1);
+    for wallIdx = 1:size(S.optWalls, 1)
+        wallStatus(wallIdx).wallIdx = wallIdx;
+        wallStatus(wallIdx).wall = S.optWalls(wallIdx, :);
+    end
+    wallStatusByVisit = [];
+    optionalWallVisitOrder = [];
     verifiedMap = S.map;
 
     if isempty(dataStore.final.stopReason) && ~isempty(S.optWalls) && remainingTime(maxTime, runTimer) > 8.0
-        [wallStatus, dataStore, verifiedMap] = verifyOptionalWalls( ...
-            Robot, S.map, S.optWalls, S.beaconLoc, offset_x, offset_y, ...
-            currentState, ekfVerifyParams, plannerParams, verifyParams, dataStore);
-        currentState = updateStateFromWallStatus(currentState, wallStatus);
+        remainingWallIdx = 1:size(S.optWalls, 1);
+        while ~isempty(remainingWallIdx) && remainingTime(maxTime, runTimer) > 8.0
+            nextWallIdx = nearestOptionalWallIndex( ...
+                currentState.pose(1:2).', S.optWalls, remainingWallIdx);
+            optionalWallVisitOrder(end + 1, 1) = nextWallIdx; %#ok<AGROW>
+
+            [localWallStatus, dataStore, verifiedMap] = verifyOptionalWallWithRelaxation( ...
+                Robot, verifiedMap, S.optWalls(nextWallIdx, :), nextWallIdx, ...
+                S.beaconLoc, offset_x, offset_y, currentState, ekfVerifyParams, ...
+                plannerParams, verifyParams, dataStore);
+
+            if ~isempty(localWallStatus)
+                localWallStatus.wallIdx = nextWallIdx;
+                localWallStatus.wall = S.optWalls(nextWallIdx, :);
+                fprintf('[finalCompetition] optional wall %d status=%s reason=%s\n', ...
+                    nextWallIdx, localWallStatus.status, localWallStatus.reason);
+                wallStatus(nextWallIdx) = copyFinalWallStatusSummary( ...
+                    wallStatus(nextWallIdx), localWallStatus, nextWallIdx, S.optWalls(nextWallIdx, :));
+                if isempty(wallStatusByVisit)
+                    wallStatusByVisit = localWallStatus;
+                else
+                    wallStatusByVisit(end + 1, 1) = localWallStatus; %#ok<AGROW>
+                end
+                currentState = updateStateFromWallStatus(currentState, localWallStatus);
+            end
+
+            remainingWallIdx(remainingWallIdx == nextWallIdx) = [];
+            dataStore = syncFinalGlobal(dataStore, sprintf('optionalWall%dDone', nextWallIdx));
+        end
+        dataStore.optionalWallStatus = wallStatus;
+        dataStore.wallStatus = wallStatus;
+        dataStore.wallStatusByVisit = wallStatusByVisit;
+        dataStore.optionalWallVisitOrder = optionalWallVisitOrder;
+        dataStore.verifiedMap = verifiedMap;
+        unknownWallIdx = find(strcmp({wallStatus.status}.', 'unknown'));
+        if ~isempty(unknownWallIdx)
+            dataStore.final.stopReason = 'optionalWallsIncomplete';
+            dataStore.final.optionalWallsIncompleteIdx = unknownWallIdx(:).';
+        end
         dataStore = syncFinalGlobal(dataStore, 'optionalWallsDone');
     end
 
@@ -133,18 +186,25 @@ try
     ecNavState = struct();
 
     if isempty(dataStore.final.stopReason) && ~isempty(ecGoals) && remainingTime(maxTime, runTimer) > 8.0
+        planningWallStatus = wallStatus;
+        if ~isempty(wallStatusByVisit)
+            planningWallStatus = wallStatusByVisit;
+        end
         [ecPlanningStartState, postOptionalWallPlanningStartInfo] = ...
             selectPostOptionalWallPlanningState( ...
-                currentState, wallStatus, postNormalSafeState, ecGoals, verifiedMap, plannerParams);
+                currentState, planningWallStatus, postNormalSafeState, ecGoals, verifiedMap, plannerParams);
+        [ecGoals, ecGoalVisitOrder] = orderNearestPoints( ...
+            ecPlanningStartState.pose(1:2).', ecGoals);
         [ecPlannedPath, ecPlannerInfo] = planWaypointSequenceKnownMap( ...
             ecPlanningStartState.pose(1:2).', ecGoals, verifiedMap, plannerParams);
+        ecPlannerInfo.visitOrder = ecGoalVisitOrder;
         [ecPlannedPath, ecPlannerInfo] = prependBridgePathToEcPlan( ...
             currentState.pose(1:2).', ecPlanningStartState.pose(1:2).', ...
             ecPlannedPath, ecPlannerInfo, verifiedMap, plannerParams);
         if ~ecPlannerInfo.bridgeSuccess
             [currentState, ecPlanningStartState, postOptionalWallPlanningStartInfo, ...
                 ecPlannerInfo, ecPlannedPath, dataStore] = runPostOptionalWallEscapeAndReplan( ...
-                    Robot, currentState, wallStatus, postNormalSafeState, ecGoals, ...
+                    Robot, currentState, planningWallStatus, postNormalSafeState, ecGoals, ...
                     verifiedMap, plannerParams, postWallEscapeParams, dataStore);
         end
 
@@ -165,6 +225,8 @@ try
     end
 
     dataStore.normalGoals = normalGoals;
+    dataStore.normalGoalVisitOrder = normalGoalVisitOrder;
+    dataStore.normalPlanningMap = normalPlanningMap;
     dataStore.normalPlannedPath = normalPlannedPath;
     dataStore.normalPlannerInfo = normalPlannerInfo;
     dataStore.normalSnapInfo = normalSnapInfo;
@@ -172,8 +234,11 @@ try
     dataStore.normalNavState = normalNavState;
     dataStore.postNormalSafeState = postNormalSafeState;
     dataStore.wallStatus = wallStatus;
+    dataStore.wallStatusByVisit = wallStatusByVisit;
+    dataStore.optionalWallVisitOrder = optionalWallVisitOrder;
     dataStore.verifiedMap = verifiedMap;
     dataStore.ecGoals = ecGoals;
+    dataStore.ecGoalVisitOrder = ecGoalVisitOrder;
     dataStore.ecPlanningStartState = ecPlanningStartState;
     dataStore.postOptionalWallPlanningStartInfo = postOptionalWallPlanningStartInfo;
     dataStore.ecPlannedPath = ecPlannedPath;
@@ -296,6 +361,52 @@ if isfinite(startWaypointIdx) && startWaypointIdx >= 1 && startWaypointIdx <= si
 end
 end
 
+function [orderedPoints, visitOrder] = orderNearestPoints(startXY, points)
+if isempty(points)
+    orderedPoints = points;
+    visitOrder = [];
+    return;
+end
+currentXY = startXY(:).';
+remainingIdx = (1:size(points, 1)).';
+visitOrder = zeros(size(points, 1), 1);
+orderedPoints = zeros(size(points));
+for k = 1:size(points, 1)
+    deltas = points(remainingIdx, :) - currentXY;
+    [~, localIdx] = min(sum(deltas .^ 2, 2));
+    chosenIdx = remainingIdx(localIdx);
+    visitOrder(k) = chosenIdx;
+    orderedPoints(k, :) = points(chosenIdx, :);
+    currentXY = points(chosenIdx, :);
+    remainingIdx(localIdx) = [];
+end
+end
+
+function wallIdx = nearestOptionalWallIndex(startXY, optWalls, candidateIdx)
+if isempty(candidateIdx)
+    wallIdx = [];
+    return;
+end
+midpoints = 0.5 * (optWalls(candidateIdx, 1:2) + optWalls(candidateIdx, 3:4));
+deltas = midpoints - startXY(:).';
+[~, localIdx] = min(sum(deltas .^ 2, 2));
+wallIdx = candidateIdx(localIdx);
+end
+
+function summary = copyFinalWallStatusSummary(summary, fullStatus, wallIdx, wall)
+summary.wallIdx = wallIdx;
+summary.wall = wall;
+if isfield(fullStatus, 'status')
+    summary.status = fullStatus.status;
+end
+if isfield(fullStatus, 'confidence')
+    summary.confidence = fullStatus.confidence;
+end
+if isfield(fullStatus, 'reason')
+    summary.reason = fullStatus.reason;
+end
+end
+
 function value = getFieldOrDefault(S, fieldName, defaultValue)
 if isstruct(S) && isfield(S, fieldName)
     value = S.(fieldName);
@@ -307,6 +418,117 @@ end
 function status = emptyFinalWallStatus()
 status = struct('wallIdx', NaN, 'wall', NaN(1, 4), 'status', 'unknown', ...
     'confidence', 0, 'reason', '');
+end
+
+function [localStatus, dataStore, verifiedMap] = verifyOptionalWallWithRelaxation( ...
+    Robot, mapIn, wall, wallIdx, beaconLoc, offset_x, offset_y, currentState, ...
+    ekfVerifyParams, plannerParams, baseVerifyParams, dataStore)
+verifiedMap = mapIn;
+localStatus = repmat(emptyFinalWallStatus(), 0, 1);
+retryLog = repmat(emptyOptionalWallRetryLog(), 0, 1);
+
+for attempt = 1:numOptionalWallRelaxationLevels()
+    [relaxedPlannerParams, relaxedVerifyParams] = makeOptionalWallRelaxedParams( ...
+        plannerParams, baseVerifyParams, wallIdx, attempt);
+    [candidateStatus, dataStore, candidateMap] = verifyOptionalWalls( ...
+        Robot, mapIn, wall, beaconLoc, offset_x, offset_y, currentState, ...
+        ekfVerifyParams, relaxedPlannerParams, relaxedVerifyParams, dataStore);
+
+    if isempty(candidateStatus)
+        candidateStatus = emptyFinalWallStatus();
+        candidateStatus.wallIdx = wallIdx;
+        candidateStatus.wall = wall;
+        candidateStatus.reason = 'emptyLocalStatus';
+    end
+    candidateStatus.wallIdx = wallIdx;
+    candidateStatus.wall = wall;
+    candidateStatus.relaxationAttempt = attempt;
+    candidateStatus.relaxationInfo = describeOptionalWallRelaxation( ...
+        relaxedPlannerParams, relaxedVerifyParams);
+
+    retryEntry = emptyOptionalWallRetryLog();
+    retryEntry.attempt = attempt;
+    retryEntry.status = candidateStatus.status;
+    retryEntry.reason = candidateStatus.reason;
+    retryEntry.relaxationInfo = candidateStatus.relaxationInfo;
+    retryLog(end + 1, 1) = retryEntry; %#ok<AGROW>
+
+    fprintf('[finalCompetition] optional wall %d retry %d status=%s reason=%s clearance=%.2f probeClearance=%.2f\n', ...
+        wallIdx, attempt, candidateStatus.status, candidateStatus.reason, ...
+        relaxedVerifyParams.observeClearance, relaxedVerifyParams.bumpFallbackClearance);
+
+    localStatus = candidateStatus;
+    verifiedMap = candidateMap;
+    if ~shouldRelaxOptionalWallSearch(candidateStatus)
+        break;
+    end
+end
+
+localStatus.relaxationRetries = retryLog;
+end
+
+function tf = shouldRelaxOptionalWallSearch(status)
+tf = strcmp(status.status, 'unknown') && ...
+    (contains(status.reason, 'noReachableObservePoint') || ...
+     contains(status.reason, 'noReachableProbeStart') || ...
+     contains(status.reason, 'planFailed_noPath') || ...
+     contains(status.reason, 'planFailed_noGraphPath') || ...
+     contains(status.reason, 'bumpFallbackPlanFailed'));
+end
+
+function n = numOptionalWallRelaxationLevels()
+n = 2;
+end
+
+function [plannerOut, verifyOut] = makeOptionalWallRelaxedParams( ...
+    plannerIn, verifyIn, wallIdx, attempt)
+plannerOut = plannerIn;
+verifyOut = verifyIn;
+verifyOut.wallIdxLabels = wallIdx;
+
+attempt = max(1, min(numOptionalWallRelaxationLevels(), attempt));
+observeClearance = [0.35 0.28 0.22 0.16 0.10];
+probeClearance = [0.28 0.22 0.16 0.12 0.08];
+navClearance = [0.42 0.34 0.28 0.22 0.16];
+cornerRadius = [0.54 0.44 0.34 0.27 0.22];
+gridSpacing = [0.45 0.35 0.28 0.22 0.18];
+
+verifyOut.observeClearance = min(verifyOut.observeClearance, observeClearance(attempt));
+verifyOut.bumpFallbackClearance = min(verifyOut.bumpFallbackClearance, probeClearance(attempt));
+verifyOut.navigationEdgeClearance = navClearance(attempt);
+verifyOut.navigationNodeClearance = navClearance(attempt);
+verifyOut.navigationCornerOffsetRadius = cornerRadius(attempt);
+verifyOut.navigationStartGoalClearance = min(0.08, max(0.02, 0.08 - 0.015 * (attempt - 1)));
+verifyOut.observeDistances = unique([verifyOut.observeDistances(:).' ...
+    0.35 0.45 0.60 0.75 0.90 1.10]);
+verifyOut.observeTangentOffsets = unique([verifyOut.observeTangentOffsets(:).' ...
+    -0.55 -0.40 -0.20 0 0.20 0.40 0.55]);
+verifyOut.bumpFallbackDistances = unique([verifyOut.bumpFallbackDistances(:).' ...
+    0.35 0.42 0.55 0.70 0.90]);
+verifyOut.bumpFallbackTangentOffsets = unique([verifyOut.bumpFallbackTangentOffsets(:).' ...
+    -0.55 -0.45 -0.25 0 0.25 0.45 0.55]);
+verifyOut.followerMaxRunTime = min(verifyOut.followerMaxRunTime, 80);
+verifyOut.bumpFallbackMaxRunTime = min(verifyOut.bumpFallbackMaxRunTime, 55);
+
+plannerOut.edgeClearance = navClearance(attempt);
+plannerOut.nodeClearance = navClearance(attempt);
+plannerOut.cornerOffsetRadius = cornerRadius(attempt);
+plannerOut.startGoalClearance = verifyOut.navigationStartGoalClearance;
+plannerOut.gridSpacing = gridSpacing(attempt);
+end
+
+function info = describeOptionalWallRelaxation(plannerParams, verifyParams)
+info = struct( ...
+    'edgeClearance', plannerParams.edgeClearance, ...
+    'nodeClearance', plannerParams.nodeClearance, ...
+    'cornerOffsetRadius', plannerParams.cornerOffsetRadius, ...
+    'gridSpacing', plannerParams.gridSpacing, ...
+    'observeClearance', verifyParams.observeClearance, ...
+    'bumpFallbackClearance', verifyParams.bumpFallbackClearance);
+end
+
+function entry = emptyOptionalWallRetryLog()
+entry = struct('attempt', NaN, 'status', '', 'reason', '', 'relaxationInfo', struct());
 end
 
 function currentState = updateStateFromEkf(currentState, ekfState)
@@ -380,8 +602,8 @@ end
 function [selectedState, info] = selectPostOptionalWallPlanningState( ...
     currentState, wallStatus, postNormalSafeState, ecGoals, map, plannerParams)
 candidates = {};
-candidates{end + 1} = struct('source', 'postNormalSafeState', 'state', postNormalSafeState);
 candidates{end + 1} = struct('source', 'currentState', 'state', currentState);
+candidates{end + 1} = struct('source', 'postNormalSafeState', 'state', postNormalSafeState);
 for i = numel(wallStatus):-1:1
     status = wallStatus(i);
     candidateState = currentState;
@@ -501,8 +723,11 @@ for attempt = 1:escapeParams.maxAttempts
         Robot, currentState, escapeParams, turnSign);
     [ecPlanningStartState, planningStartInfo] = selectPostOptionalWallPlanningState( ...
         currentState, wallStatus, postNormalSafeState, ecGoals, verifiedMap, plannerParams);
+    [orderedEcGoals, ecGoalVisitOrder] = orderNearestPoints( ...
+        ecPlanningStartState.pose(1:2).', ecGoals);
     [ecTailPath, ecPlannerInfo] = planWaypointSequenceKnownMap( ...
-        ecPlanningStartState.pose(1:2).', ecGoals, verifiedMap, plannerParams);
+        ecPlanningStartState.pose(1:2).', orderedEcGoals, verifiedMap, plannerParams);
+    ecPlannerInfo.visitOrder = ecGoalVisitOrder;
     [ecPlannedPath, ecPlannerInfo] = prependBridgePathToEcPlan( ...
         currentState.pose(1:2).', ecPlanningStartState.pose(1:2).', ...
         ecTailPath, ecPlannerInfo, verifiedMap, plannerParams);

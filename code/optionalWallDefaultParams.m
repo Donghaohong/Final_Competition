@@ -16,6 +16,10 @@ params.observeAlignmentPenalty = 0.20;
 % Motion to observation point.
 params.followerMaxRunTime = 140.0;
 params.stopIfNavigationFails = false;
+params.approachCloseEnough = 0.08;
+params.requirePreciseApproach = true;
+params.maxApproachGoalError = 0.12;
+params.requireTurnConvergedBeforeProbe = true;
 params.navigationEdgeClearance = 0.42;
 params.navigationNodeClearance = 0.42;
 params.navigationCornerOffsetRadius = 0.54;
@@ -30,6 +34,7 @@ params.ekfFollowerUseDepth = true;
 params.ekfFollowerDepthSigma = 0.30;
 params.ekfFollowerDepthResidualGate = 0.65;
 params.ekfFollowerDepthMinBeamsForUpdate = 2;
+params.disableFollowerBumpRecovery = true;
 
 % Turn-to-wall behavior.
 params.turnMaxTime = 8.0;
@@ -70,6 +75,12 @@ params.bumpProbeRobotRadius = 0.17;
 params.bumpProbeMinTravelForWall = 0.06;
 params.bumpProbeBackupDistance = 0.60;
 params.bumpProbeBackupSpeed = -0.06;
+params.bumpProbeReturnToStart = true;
+params.bumpProbeReturnExtraDistance = 0.03;
+params.bumpProbeHitExtraBackupDistance = 0.18;
+params.bumpProbeSnapPoseToStart = false;
+params.bumpProbeSnapPoseStdXY = 0.04;
+params.bumpProbeSnapPoseStdTheta = deg2rad(6);
 
 % If the normal depth observation point is unreachable, try a direct low-speed
 % bump probe from a nearby reachable standoff point instead of giving up.
@@ -78,6 +89,9 @@ params.bumpFallbackDistances = [0.42 0.55 0.70 0.90];
 params.bumpFallbackTangentOffsets = [-0.45 -0.25 0 0.25 0.45];
 params.bumpFallbackClearance = 0.28;
 params.bumpFallbackMaxRunTime = 90.0;
+% Treat the probe standoff point like a normal waypoint. The low-speed bump
+% probe handles the final contact after waypoint navigation reaches standoff.
+params.bumpFallbackUseWaypointPlanner = true;
 
 params.debugPrint = true;
 params.wallIdxLabels = [];
