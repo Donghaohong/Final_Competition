@@ -56,6 +56,8 @@ params.unexpectedObstacleMargin = 0.18;
 params.minUnexpectedObstacleFrac = 0.35;
 params.minMeanUnexpectedObstacle = 0.20;
 params.minStrongUnexpectedObstacle = 0.45;
+params.enableCloseWallPairInference = true;
+params.closeWallPairDistance = 0.40;
 
 % Low-speed contact probe. This is more reliable than depth for deciding
 % whether a candidate wall physically blocks the path.
@@ -78,6 +80,7 @@ params.bumpFallbackDistances = [0.42 0.55 0.70 0.90];
 params.bumpFallbackTangentOffsets = [-0.45 -0.25 0 0.25 0.45];
 params.bumpFallbackClearance = 0.28;
 params.bumpFallbackMaxRunTime = 90.0;
+params.disableFollowerBumpRecovery = true;
 
 params.debugPrint = true;
 params.wallIdxLabels = [];

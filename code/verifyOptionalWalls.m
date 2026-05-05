@@ -33,11 +33,23 @@ plannerParams = applyOptionalWallNavigationClearance(plannerParams, params);
 currentState = initState;
 confirmedOptionalWalls = zeros(0, 4);
 wallStatus = repmat(emptyWallStatus(), size(optWalls, 1), 1);
+for statusIdx = 1:numel(wallStatus)
+    wallStatus(statusIdx).wallIdx = getOptionalWallDisplayIdx(statusIdx, params);
+    wallStatus(statusIdx).wall = optWalls(statusIdx, :);
+end
 
 for i = 1:size(optWalls, 1)
     currentMap = [map; confirmedOptionalWalls];
     wall = optWalls(i, :);
     displayWallIdx = getOptionalWallDisplayIdx(i, params);
+
+    if optionalWallStatusIsResolved(wallStatus(i))
+        if params.debugPrint
+            fprintf('[verifyOptionalWalls] wall %d inferred status=%s reason=%s\n', ...
+                displayWallIdx, wallStatus(i).status, wallStatus(i).reason);
+        end
+        continue;
+    end
 
     [observePoint, observeInfo] = chooseOptionalWallObservePoint( ...
         currentState.pose(1:2).', wall, currentMap, plannerParams, params);
@@ -52,9 +64,8 @@ for i = 1:size(optWalls, 1)
             Robot, currentState, wall, currentMap, beaconLoc, offset_x, offset_y, ...
             trackingParams, plannerParams, params, dataStore, i);
         wallStatus(i) = mergeFallbackWallStatus(wallStatus(i), fallbackStatus);
-        if strcmp(wallStatus(i).status, 'exists')
-            confirmedOptionalWalls = [confirmedOptionalWalls; wall]; %#ok<AGROW>
-        end
+        wallStatus = applyCloseWallPairInference(wallStatus, optWalls, i, params);
+        confirmedOptionalWalls = optionalWallsFromStatus(optWalls, wallStatus);
         continue;
     end
 
@@ -121,9 +132,8 @@ for i = 1:size(optWalls, 1)
     wallStatus(i).classification = classification;
     wallStatus(i).bumpProbe = bumpProbe;
 
-    if strcmp(classification.status, 'exists')
-        confirmedOptionalWalls = [confirmedOptionalWalls; wall]; %#ok<AGROW>
-    end
+    wallStatus = applyCloseWallPairInference(wallStatus, optWalls, i, params);
+    confirmedOptionalWalls = optionalWallsFromStatus(optWalls, wallStatus);
 
     if params.debugPrint
         fprintf('[verifyOptionalWalls] wall %d status=%s conf=%.2f rays=%d absentErr=%.3f presentErr=%.3f\n', ...
@@ -163,6 +173,85 @@ displayIdx = localIdx;
 if isfield(params, 'wallIdxLabels') && numel(params.wallIdxLabels) >= localIdx && ...
         isfinite(params.wallIdxLabels(localIdx))
     displayIdx = params.wallIdxLabels(localIdx);
+end
+end
+
+function tf = optionalWallStatusIsResolved(status)
+tf = isstruct(status) && isfield(status, 'status') && ...
+    ~isempty(status.status) && ~strcmp(status.status, 'unknown');
+end
+
+function walls = optionalWallsFromStatus(optWalls, wallStatus)
+existsMask = false(size(optWalls, 1), 1);
+for i = 1:numel(wallStatus)
+    existsMask(i) = isfield(wallStatus(i), 'status') && strcmp(wallStatus(i).status, 'exists');
+end
+walls = optWalls(existsMask, :);
+end
+
+function wallStatus = applyCloseWallPairInference(wallStatus, optWalls, sourceIdx, params)
+if ~isfield(params, 'enableCloseWallPairInference') || ~params.enableCloseWallPairInference
+    return;
+end
+if sourceIdx < 1 || sourceIdx > numel(wallStatus)
+    return;
+end
+if ~isfield(wallStatus(sourceIdx), 'bumpProbe') || isempty(wallStatus(sourceIdx).bumpProbe)
+    return;
+end
+
+[partnerIdx, pairDistance] = closestOptionalWallPartner(optWalls, sourceIdx, params);
+if isempty(partnerIdx) || optionalWallStatusIsResolved(wallStatus(partnerIdx))
+    return;
+end
+
+if optionalWallBumpProbeHitWall(wallStatus(sourceIdx).bumpProbe)
+    wallStatus(partnerIdx).status = 'absent';
+    wallStatus(partnerIdx).confidence = 1;
+    wallStatus(partnerIdx).reason = sprintf('pairedWall%dHit', wallStatus(sourceIdx).wallIdx);
+elseif optionalWallBumpProbeDidNotHitWall(wallStatus(sourceIdx).bumpProbe)
+    wallStatus(partnerIdx).status = 'exists';
+    wallStatus(partnerIdx).confidence = 1;
+    wallStatus(partnerIdx).reason = sprintf('pairedWall%dNoHit', wallStatus(sourceIdx).wallIdx);
+else
+    return;
+end
+
+wallStatus(partnerIdx).pairInference = struct( ...
+    'sourceIdx', sourceIdx, ...
+    'sourceWallIdx', wallStatus(sourceIdx).wallIdx, ...
+    'distance', pairDistance, ...
+    'sourceBumped', wallStatus(sourceIdx).bumpProbe.bumped);
+end
+
+function [partnerIdx, pairDistance] = closestOptionalWallPartner(optWalls, sourceIdx, params)
+partnerIdx = [];
+pairDistance = inf;
+if size(optWalls, 1) < 2
+    return;
+end
+
+maxPairDistance = 0.40;
+if isfield(params, 'closeWallPairDistance') && isfinite(params.closeWallPairDistance)
+    maxPairDistance = params.closeWallPairDistance;
+end
+
+sourceWall = optWalls(sourceIdx, :);
+for i = 1:size(optWalls, 1)
+    if i == sourceIdx
+        continue;
+    end
+    d = segmentSegmentDistanceLocal( ...
+        sourceWall(1:2), sourceWall(3:4), optWalls(i, 1:2), optWalls(i, 3:4));
+    if d < pairDistance
+        pairDistance = d;
+        partnerIdx = i;
+    end
+end
+
+if pairDistance > maxPairDistance
+    partnerIdx = [];
+    pairDistance = inf;
 end
 end
 
@@ -212,6 +301,10 @@ function [trackingState, dataStore, navState] = runOptionalWallFollower( ...
 % Optional-wall observation/probe navigation points are not scoring goals.
 followerParams.beepMask = false(size(goalWaypoints, 1), 1);
 followerParams.disableBeep = true;
+if isfield(verifyParams, 'disableFollowerBumpRecovery') && verifyParams.disableFollowerBumpRecovery
+    followerParams.stopOnBump = false;
+    followerParams.enableBumpRecovery = false;
+end
 if strcmp(getOptionalWallFollowerMode(verifyParams), 'pf')
     [trackingState, dataStore, navState] = runPfWaypointFollower( ...
         Robot, map, beaconLoc, goalWaypoints, offset_x, offset_y, ...
@@ -317,6 +410,7 @@ status = struct( ...
     'errPresent', inf, ...
     'errAbsent', inf, ...
     'classification', struct(), ...
+    'pairInference', struct(), ...
     'bumpProbe', struct());
 end
 
@@ -1074,6 +1168,18 @@ end
 function val = orientLocal(a, b, c)
 val = (b(1) - a(1)) * (c(2) - a(2)) - ...
       (b(2) - a(2)) * (c(1) - a(1));
+end
+
+function tf = optionalWallBumpProbeHitWall(bumpProbe)
+tf = isstruct(bumpProbe) && isfield(bumpProbe, 'ran') && bumpProbe.ran && ...
+    isfield(bumpProbe, 'bumped') && bumpProbe.bumped && ...
+    isfield(bumpProbe, 'status') && strcmp(bumpProbe.status, 'exists');
+end
+
+function tf = optionalWallBumpProbeDidNotHitWall(bumpProbe)
+tf = isstruct(bumpProbe) && isfield(bumpProbe, 'ran') && bumpProbe.ran && ...
+    isfield(bumpProbe, 'bumped') && ~bumpProbe.bumped && ...
+    isfield(bumpProbe, 'status') && strcmp(bumpProbe.status, 'absent');
 end
 
 function t = getOptionalWallTime(dataStore)
